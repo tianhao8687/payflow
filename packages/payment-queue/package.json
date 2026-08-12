@@ -10,6 +10,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "lint": "eslint \"src/**/*.ts\"",
+    "pretest": "pnpm --filter @payflow/observability build",
     "test": "jest --runInBand",
     "typecheck": "tsc --noEmit"
   },
