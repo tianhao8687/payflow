@@ -1,6 +1,6 @@
 # ADR 0006: Hosted Stripe Checkout with stable payment idempotency
 
-- Status: Accepted for implementation; external sandbox gate pending
+- Status: Accepted
 - Stage: 3
 
 ## Context
@@ -34,7 +34,8 @@ sufficient.
   validation; an absent key makes Checkout return a controlled 503 without
   reserving a payment.
 - Use `stripe` 22.5.0 and its pinned API version `2026-07-29.dahlia`, matching
-  the installed official SDK types.
+  the installed official SDK types. That API renamed the legacy hosted
+  `ui_mode` value to `hosted_page`; a contract test pins the accepted value.
 
 ## Consequences
 
@@ -46,5 +47,6 @@ sufficient.
   retrying is safe because the same key asks Stripe for the same operation.
 - The result page can show only local `CREATED`, `PENDING`, or later trusted
   states. Stage 4 webhooks remain the final authority for success.
-- The implementation can be tested with a fake gateway, but the Stage 3 phase
-  gate remains open until a real Stripe Test hosted page is opened.
+- The fake gateway keeps CI deterministic, while a separate external acceptance
+  check proves a real Stripe Test hosted page opens and a repeated request reuses
+  the provider Session.

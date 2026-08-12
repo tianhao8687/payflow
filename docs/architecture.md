@@ -1,10 +1,10 @@
 # PayFlow architecture
 
-## Current boundary: Stage 3 implementation, external gate pending
+## Current boundary: Stage 3 accepted
 
 Stage 3 adds the separate payment aggregate, Stripe-hosted Test Checkout, stable
-provider idempotency, and local payment-status UI. The external hosted-page gate
-is pending, so Stage 4 webhook processing has not begun.
+provider idempotency, and local payment-status UI. Its real hosted-page gate has
+passed; Stage 4 webhook processing has not begun.
 
 ```mermaid
 flowchart TB

@@ -4,9 +4,9 @@ PayFlow is a full-stack payment-system portfolio project implemented one
 acceptance-gated stage at a time from the accompanying Codex implementation
 specification.
 
-> Current delivery: **Stage 3 — Stripe Payment (external gate pending)**. The
-> implementation and local gates pass, but a real Stripe Test hosted page must
-> open before Stage 3 is accepted or Stage 4 webhook work begins.
+> Current delivery: **Stage 3 — Stripe Payment (accepted)**. A real Stripe Test
+> hosted page and repeated-session idempotency have passed. Stage 4 webhook work
+> is next and has not yet changed payment state.
 
 ## Current architecture
 

@@ -2,9 +2,9 @@
 
 Date: 2026-08-12
 
-Status: Implementation complete; external acceptance pending
+Status: Accepted
 
-Next stage: Blocked by this stage gate
+Next stage: Stage 4 not started
 
 ## 1. Stage objective
 
@@ -50,6 +50,9 @@ docs/stages/stage-3.md
 - The browser accepts redirects only to HTTPS `checkout.stripe.com` and uses the
   protected local Payment API—not URL query data—for displayed status.
 - The runtime accepts only `sk_test_` or `rk_test_` keys and rejects live keys.
+- The installed Stripe 22.5.0 client targets API `2026-07-29.dahlia`.
+  During the real gate, Stripe rejected legacy `ui_mode=hosted` and required
+  `ui_mode=hosted_page`; the gateway now uses and unit-tests that current value.
 
 ## 4. Migration
 
@@ -76,12 +79,12 @@ until a later trusted server-side update.
 pnpm format                      PASS
 pnpm lint                        PASS
 pnpm typecheck                   PASS
-pnpm test                        PASS (10 suites, 39 tests)
+pnpm test                        PASS (11 suites, 40 tests)
 pnpm build                       PASS (web, API, database, shared)
 pnpm db:migrate:deploy           PASS (Stage 3 migration applied)
 pnpm test:e2e                    PASS (1 suite, 5 acceptance tests)
 browser functional checks       PASS (18 checks)
-real Stripe Test hosted page    PENDING (no local sandbox key configured)
+real Stripe Test hosted page    PASS (13 assertions, checkout.stripe.com)
 ```
 
 The database-backed E2E suite proves concurrent duplicate clicks converge on one
@@ -97,6 +100,13 @@ runtime errors. The expected 503 resource message accompanies the deliberately
 tested missing-key path. The in-app browser kernel was unavailable, so the
 bundled Playwright Chromium performed the equivalent checks.
 
+The external gate used a real `sk_test_` credential without logging its value.
+Two sequential Checkout requests for one order returned the same local Payment,
+the same `cs_test` provider Session, and the same hosted URL. PostgreSQL recorded
+one Payment and one provider call. The PayFlow button then opened the rendered
+Stripe-hosted page at `checkout.stripe.com`; no card data was entered and no
+payment was submitted.
+
 ## 7. Acceptance checklist
 
 - [x] Browser sends only an order ID; the server supplies amount and line items.
@@ -107,10 +117,10 @@ bundled Playwright Chromium performed the equivalent checks.
 - [x] Live Stripe keys are rejected and a missing test key fails closed.
 - [x] Redirect values cannot prove success or update local state.
 - [x] Unit, E2E, migration, build, and responsive browser gates pass.
-- [ ] A real Stripe Test hosted Checkout page opens from the PayFlow UI.
+- [x] A real Stripe Test hosted Checkout page opens from the PayFlow UI.
 
 ## 8. Phase gate
 
-Stage 3 is **not accepted yet**. Its only remaining criterion is opening a real
-Stripe Test hosted Checkout page using a locally configured sandbox key. Per the
-specification, Stage 4 must not begin until that external check passes.
+Stage 3 passed every acceptance criterion in the implementation specification,
+including the real Stripe Test hosted-page and third-party idempotency gate.
+Stage 4 may now begin.

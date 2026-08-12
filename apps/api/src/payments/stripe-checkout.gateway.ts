@@ -102,7 +102,7 @@ export class StripeCheckoutGateway {
             },
           },
           success_url: input.successUrl,
-          ui_mode: 'hosted',
+          ui_mode: 'hosted_page',
         },
         { idempotencyKey: input.idempotencyKey },
       );
