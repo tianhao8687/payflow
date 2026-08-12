@@ -11,9 +11,16 @@ import {
 export const WEBHOOK_QUEUE_NAME = 'payflow-webhooks';
 export const WEBHOOK_JOB_NAME = 'process-webhook';
 export const WEBHOOK_JOB_ATTEMPTS = 5;
+export const OUTBOX_QUEUE_NAME = 'payflow-outbox';
+export const OUTBOX_JOB_NAME = 'process-outbox-event';
+export const OUTBOX_JOB_ATTEMPTS = 5;
 
 export interface WebhookJobData {
   webhookEventId: string;
+}
+
+export interface OutboxJobData {
+  outboxEventId: string;
 }
 
 export interface WebhookQueueJobView {
@@ -39,6 +46,50 @@ export type WebhookWorker = Worker<
   void,
   typeof WEBHOOK_JOB_NAME
 >;
+export type OutboxJob = Job<OutboxJobData, void, typeof OUTBOX_JOB_NAME>;
+export type OutboxWorker = Worker<OutboxJobData, void, typeof OUTBOX_JOB_NAME>;
+
+export class PayFlowOutboxQueue {
+  private readonly queue: Queue<OutboxJobData, void, typeof OUTBOX_JOB_NAME>;
+
+  constructor(redisUrl: string, prefix = 'payflow') {
+    this.queue = new Queue(OUTBOX_QUEUE_NAME, {
+      connection: redisConnection(redisUrl),
+      defaultJobOptions: {
+        attempts: OUTBOX_JOB_ATTEMPTS,
+        backoff: { delay: 1_000, type: 'exponential' },
+        keepLogs: 50,
+        removeOnComplete: { age: 86_400, count: 2_000 },
+        removeOnFail: { age: 604_800, count: 2_000 },
+      },
+      prefix,
+    });
+  }
+
+  async enqueue(outboxEventId: string): Promise<string> {
+    const job = await this.queue.add(
+      OUTBOX_JOB_NAME,
+      { outboxEventId },
+      { jobId: outboxEventId },
+    );
+    if (!job.id) {
+      throw new Error('BullMQ did not return an outbox job identifier.');
+    }
+    return job.id;
+  }
+
+  async ping(): Promise<void> {
+    await this.queue.waitUntilReady();
+  }
+
+  get rawQueue(): Queue<OutboxJobData, void, typeof OUTBOX_JOB_NAME> {
+    return this.queue;
+  }
+
+  async close(): Promise<void> {
+    await this.queue.close();
+  }
+}
 
 export class PayFlowWebhookQueue {
   private readonly queue: Queue<WebhookJobData, void, typeof WEBHOOK_JOB_NAME>;
@@ -138,6 +189,22 @@ export function createWebhookQueueEvents(
     connection: redisConnection(redisUrl),
     prefix,
   });
+}
+
+export function createOutboxWorker(
+  redisUrl: string,
+  processor: (job: OutboxJob) => Promise<void>,
+  options: { concurrency?: number; prefix?: string } = {},
+): OutboxWorker {
+  return new Worker<OutboxJobData, void, typeof OUTBOX_JOB_NAME>(
+    OUTBOX_QUEUE_NAME,
+    processor,
+    {
+      concurrency: options.concurrency ?? 4,
+      connection: redisConnection(redisUrl),
+      prefix: options.prefix ?? 'payflow',
+    },
+  );
 }
 
 export function unrecoverable(error: unknown): UnrecoverableError {

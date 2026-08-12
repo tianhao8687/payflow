@@ -1,5 +1,10 @@
 import { Injectable } from '@nestjs/common';
-import { PaymentStatus, Prisma } from '@payflow/database';
+import {
+  OutboxEventStatus,
+  PaymentStatus,
+  Prisma,
+  ReconciliationIssueStatus,
+} from '@payflow/database';
 
 import { DatabaseService } from '../database/database.service';
 import type {
@@ -27,6 +32,13 @@ export type AdminPaymentDetailRecord = Prisma.PaymentGetPayload<{
     refunds: true;
   };
 }>;
+const reconciliationIssueInclude = {
+  payment: { include: { order: { include: { user: true } } } },
+} as const;
+export type AdminReconciliationIssueRecord =
+  Prisma.ReconciliationIssueGetPayload<{
+    include: typeof reconciliationIssueInclude;
+  }>;
 
 @Injectable()
 export class AdminRepository {
@@ -35,7 +47,9 @@ export class AdminRepository {
   async dashboard(): Promise<{
     failedPaymentCount: number;
     failedWebhookCount: number;
+    openReconciliationIssueCount: number;
     orderCount: number;
+    pendingOutboxEventCount: number;
     refundTotals: Array<{ amount: bigint; currency: string }>;
     successfulPaymentCount: number;
   }> {
@@ -44,6 +58,8 @@ export class AdminRepository {
       successfulPaymentCount,
       failedPaymentCount,
       failedWebhookCount,
+      pendingOutboxEventCount,
+      openReconciliationIssueCount,
       refundTotals,
     ] = await Promise.all([
       this.database.prisma.order.count(),
@@ -62,6 +78,12 @@ export class AdminRepository {
         where: { status: PaymentStatus.FAILED },
       }),
       this.database.prisma.webhookEvent.count({ where: { status: 'FAILED' } }),
+      this.database.prisma.outboxEvent.count({
+        where: { status: OutboxEventStatus.PENDING },
+      }),
+      this.database.prisma.reconciliationIssue.count({
+        where: { status: ReconciliationIssueStatus.OPEN },
+      }),
       this.database.prisma.$queryRaw<
         Array<{ amount: bigint; currency: string }>
       >(Prisma.sql`
@@ -77,7 +99,9 @@ export class AdminRepository {
     return {
       failedPaymentCount,
       failedWebhookCount,
+      openReconciliationIssueCount,
       orderCount,
+      pendingOutboxEventCount,
       refundTotals,
       successfulPaymentCount,
     };
@@ -288,6 +312,82 @@ export class AdminRepository {
     ]);
 
     return { items, total };
+  }
+
+  async integritySnapshot() {
+    const [outboxCounts, outboxEvents, ledgerTransactions, runs, issues] =
+      await Promise.all([
+        this.database.prisma.outboxEvent.groupBy({
+          by: ['status'],
+          _count: { _all: true },
+        }),
+        this.database.prisma.outboxEvent.findMany({
+          orderBy: { createdAt: 'desc' },
+          take: 30,
+        }),
+        this.database.prisma.ledgerTransaction.findMany({
+          include: {
+            entries: {
+              include: { account: true },
+              orderBy: { createdAt: 'asc' },
+            },
+          },
+          orderBy: { createdAt: 'desc' },
+          take: 30,
+        }),
+        this.database.prisma.reconciliationRun.findMany({
+          orderBy: { startedAt: 'desc' },
+          take: 10,
+        }),
+        this.database.prisma.reconciliationIssue.findMany({
+          include: reconciliationIssueInclude,
+          orderBy: [{ status: 'asc' }, { lastSeenAt: 'desc' }],
+          take: 50,
+        }),
+      ]);
+
+    return { issues, ledgerTransactions, outboxCounts, outboxEvents, runs };
+  }
+
+  resolveReconciliationIssue(id: string, actorId: string) {
+    return this.database.prisma.$transaction(async (transaction) => {
+      await transaction.$queryRaw(
+        Prisma.sql`SELECT "id" FROM "reconciliation_issues"
+          WHERE "id" = CAST(${id} AS UUID) FOR UPDATE`,
+      );
+      const issue = await transaction.reconciliationIssue.findUnique({
+        where: { id },
+        include: reconciliationIssueInclude,
+      });
+      if (!issue || issue.status === ReconciliationIssueStatus.RESOLVED) {
+        return issue;
+      }
+
+      const resolved = await transaction.reconciliationIssue.update({
+        where: { id },
+        data: {
+          resolvedAt: new Date(),
+          resolvedById: actorId,
+          status: ReconciliationIssueStatus.RESOLVED,
+        },
+        include: reconciliationIssueInclude,
+      });
+      await transaction.auditLog.create({
+        data: {
+          action: 'RECONCILIATION_ISSUE_RESOLVED',
+          actorId,
+          actorType: 'ADMIN',
+          metadataJson: {
+            issueType: issue.issueType,
+            paymentId: issue.paymentId,
+            provider: issue.provider,
+          },
+          targetId: issue.id,
+          targetType: 'RECONCILIATION_ISSUE',
+        },
+      });
+      return resolved;
+    });
   }
 }
 

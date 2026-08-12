@@ -1,4 +1,11 @@
-import { Controller, Get, Param, ParseUUIDPipe, Query } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Param,
+  ParseUUIDPipe,
+  Patch,
+  Query,
+} from '@nestjs/common';
 import {
   ApiBearerAuth,
   ApiNotFoundResponse,
@@ -9,6 +16,8 @@ import {
 } from '@nestjs/swagger';
 
 import { Roles } from '../auth/decorators/roles.decorator';
+import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import type { AuthenticatedUser } from '../auth/auth-user';
 import { AdminService } from './admin.service';
 import {
   AdminAuditLogsQueryDto,
@@ -20,11 +29,13 @@ import {
 import {
   AdminAuditLogsResponseDto,
   AdminDashboardResponseDto,
+  AdminIntegrityResponseDto,
   AdminOrderDetailDto,
   AdminOrdersResponseDto,
   AdminPaymentDetailDto,
   AdminPaymentsResponseDto,
   AdminRefundsResponseDto,
+  AdminReconciliationIssueDto,
   AdminWebhooksResponseDto,
   AdminWebhookQueueResponseDto,
 } from './dto/admin-response.dto';
@@ -108,6 +119,27 @@ export class AdminController {
   @ApiOkResponse({ type: AdminWebhookQueueResponseDto })
   webhookQueue(): Promise<AdminWebhookQueueResponseDto> {
     return this.adminService.webhookQueueSnapshot();
+  }
+
+  @Get('integrity')
+  @ApiOperation({
+    summary: 'Inspect outbox delivery, balanced ledger, and reconciliation',
+  })
+  @ApiOkResponse({ type: AdminIntegrityResponseDto })
+  integrity(): Promise<AdminIntegrityResponseDto> {
+    return this.adminService.integrity();
+  }
+
+  @Patch('reconciliation/issues/:id/resolve')
+  @ApiOperation({ summary: 'Mark a reconciliation issue as resolved' })
+  @ApiParam({ format: 'uuid', name: 'id' })
+  @ApiOkResponse({ type: AdminReconciliationIssueDto })
+  @ApiNotFoundResponse({ description: 'Reconciliation issue not found' })
+  resolveReconciliationIssue(
+    @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
+    @CurrentUser() actor: AuthenticatedUser,
+  ): Promise<AdminReconciliationIssueDto> {
+    return this.adminService.resolveReconciliationIssue(id, actor.id);
   }
 
   @Get('audit-logs')

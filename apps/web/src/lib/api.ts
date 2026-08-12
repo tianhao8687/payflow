@@ -131,6 +131,87 @@ export interface AdminDashboard {
   failedPaymentCount: number;
   refundTotals: AdminCurrencyAmount[];
   failedWebhookCount: number;
+  pendingOutboxEventCount: number;
+  openReconciliationIssueCount: number;
+}
+
+export type OutboxStatus = 'PENDING' | 'PUBLISHED' | 'PROCESSED' | 'FAILED';
+
+export interface AdminOutboxEvent {
+  id: string;
+  eventKey: string;
+  aggregateType: string;
+  aggregateId: string;
+  eventType: string;
+  status: OutboxStatus;
+  publishAttempts: number;
+  processingAttempts: number;
+  queueJobId: string | null;
+  lastError: string | null;
+  createdAt: string;
+  publishedAt: string | null;
+  processedAt: string | null;
+}
+
+export interface AdminLedgerEntry {
+  id: string;
+  accountCode: string;
+  accountName: string;
+  direction: 'DEBIT' | 'CREDIT';
+  amount: number;
+  currency: string;
+}
+
+export interface AdminLedgerTransaction {
+  id: string;
+  outboxEventId: string;
+  transactionType: 'PAYMENT' | 'REFUND';
+  referenceType: string;
+  referenceId: string;
+  currency: string;
+  balance: number;
+  entries: AdminLedgerEntry[];
+  createdAt: string;
+}
+
+export interface AdminReconciliationRun {
+  id: string;
+  status: 'RUNNING' | 'COMPLETED' | 'COMPLETED_WITH_ERRORS';
+  checkedCount: number;
+  passedCount: number;
+  issueCount: number;
+  errorCount: number;
+  windowStart: string;
+  windowEnd: string;
+  startedAt: string;
+  completedAt: string | null;
+}
+
+export interface AdminReconciliationIssue {
+  id: string;
+  paymentId: string;
+  orderNo: string;
+  customerEmail: string;
+  provider: PaymentProvider;
+  issueType:
+    | 'AMOUNT_MISMATCH'
+    | 'CURRENCY_MISMATCH'
+    | 'STATUS_MISMATCH'
+    | 'REFUND_TOTAL_MISMATCH';
+  status: 'OPEN' | 'RESOLVED';
+  localSnapshot: Record<string, unknown>;
+  providerSnapshot: Record<string, unknown>;
+  detectedAt: string;
+  lastSeenAt: string;
+  resolvedAt: string | null;
+}
+
+export interface AdminIntegrity {
+  outboxCounts: Record<OutboxStatus, number>;
+  outboxEvents: AdminOutboxEvent[];
+  ledgerTransactions: AdminLedgerTransaction[];
+  reconciliationRuns: AdminReconciliationRun[];
+  reconciliationIssues: AdminReconciliationIssue[];
 }
 
 export interface AdminPage<T> {

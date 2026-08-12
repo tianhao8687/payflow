@@ -19,7 +19,7 @@ export function SiteHeader() {
 
   return (
     <header className="border-b border-[#d7dbe2] bg-white">
-      <div className="mx-auto flex min-h-[76px] max-w-[1536px] flex-wrap items-center justify-between gap-x-5 gap-y-3 px-5 py-4 sm:min-h-[86px] sm:flex-nowrap sm:px-8 lg:px-16">
+      <div className="mx-auto flex min-h-[76px] max-w-[1536px] flex-wrap items-center justify-between gap-x-5 gap-y-3 px-5 py-4 sm:min-h-[86px] sm:px-8 lg:flex-nowrap lg:px-16">
         <Link
           className="inline-flex shrink-0 items-center gap-2.5 rounded-sm focus-visible:outline-3 focus-visible:outline-offset-4 focus-visible:outline-[#0757ff]"
           href="/"
@@ -32,7 +32,7 @@ export function SiteHeader() {
         </Link>
 
         <nav
-          className="order-3 flex w-full items-center gap-1 overflow-x-auto sm:order-2 sm:w-auto sm:overflow-visible"
+          className="order-3 flex w-full items-center gap-1 overflow-x-auto lg:order-2 lg:w-auto lg:overflow-visible"
           aria-label="Primary navigation"
         >
           {navigation.map((item) => (
@@ -65,7 +65,7 @@ export function SiteHeader() {
           ) : null}
         </nav>
 
-        <div className="order-2 flex shrink-0 items-center gap-2 sm:order-3">
+        <div className="order-2 flex shrink-0 items-center gap-2 lg:order-3">
           <Link
             aria-label={`Cart with ${count} ${count === 1 ? 'item' : 'items'}`}
             className="inline-flex min-h-10 items-center gap-2 rounded-md border border-[#b8bec8] px-3.5 text-sm font-semibold hover:border-[#080a0f] hover:bg-[#f5f7fa] focus-visible:outline-3 focus-visible:outline-offset-3 focus-visible:outline-[#0757ff]"

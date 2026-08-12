@@ -1,5 +1,10 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { RefundStatus, type Refund } from '@payflow/database';
+import {
+  LedgerDirection,
+  OutboxEventStatus,
+  RefundStatus,
+  type Refund,
+} from '@payflow/database';
 
 import { WebhookQueueService } from '../queue/webhook-queue.service';
 
@@ -7,6 +12,7 @@ import {
   AdminRepository,
   type AdminPaymentDetailRecord,
   type AdminPaymentRecord,
+  type AdminReconciliationIssueRecord,
 } from './admin.repository';
 import type {
   AdminAuditLogsQueryDto,
@@ -19,6 +25,7 @@ import {
   AdminAuditLogItemDto,
   AdminAuditLogsResponseDto,
   AdminDashboardResponseDto,
+  AdminIntegrityResponseDto,
   AdminOrderDetailDto,
   AdminOrderListItemDto,
   AdminOrdersResponseDto,
@@ -27,6 +34,7 @@ import {
   AdminPaymentsResponseDto,
   AdminRefundItemDto,
   AdminRefundsResponseDto,
+  AdminReconciliationIssueDto,
   AdminWebhookItemDto,
   AdminWebhooksResponseDto,
   AdminWebhookQueueResponseDto,
@@ -45,7 +53,9 @@ export class AdminService {
     return {
       failedPaymentCount: dashboard.failedPaymentCount,
       failedWebhookCount: dashboard.failedWebhookCount,
+      openReconciliationIssueCount: dashboard.openReconciliationIssueCount,
       orderCount: dashboard.orderCount,
+      pendingOutboxEventCount: dashboard.pendingOutboxEventCount,
       refundTotals: dashboard.refundTotals.map((total) => ({
         amount: Number(total.amount),
         currency: total.currency,
@@ -171,6 +181,92 @@ export class AdminService {
     return this.webhookQueue.snapshot(50);
   }
 
+  async integrity(): Promise<AdminIntegrityResponseDto> {
+    const snapshot = await this.adminRepository.integritySnapshot();
+    const outboxCounts: Record<string, number> = Object.fromEntries(
+      Object.values(OutboxEventStatus).map((status) => [status, 0]),
+    );
+    for (const count of snapshot.outboxCounts) {
+      outboxCounts[count.status] = count._count._all;
+    }
+
+    return {
+      ledgerTransactions: snapshot.ledgerTransactions.map((transaction) => ({
+        balance: transaction.entries.reduce(
+          (total, entry) =>
+            total +
+            (entry.direction === LedgerDirection.DEBIT
+              ? entry.amount
+              : -entry.amount),
+          0,
+        ),
+        createdAt: transaction.createdAt.toISOString(),
+        currency: transaction.currency,
+        entries: transaction.entries.map((entry) => ({
+          accountCode: entry.account.code,
+          accountName: entry.account.name,
+          amount: entry.amount,
+          currency: entry.currency,
+          direction: entry.direction,
+          id: entry.id,
+        })),
+        id: transaction.id,
+        outboxEventId: transaction.outboxEventId,
+        referenceId: transaction.referenceId,
+        referenceType: transaction.referenceType,
+        transactionType: transaction.transactionType,
+      })),
+      outboxCounts,
+      outboxEvents: snapshot.outboxEvents.map((event) => ({
+        aggregateId: event.aggregateId,
+        aggregateType: event.aggregateType,
+        createdAt: event.createdAt.toISOString(),
+        eventKey: event.eventKey,
+        eventType: event.eventType,
+        id: event.id,
+        lastError: event.lastError,
+        processedAt: event.processedAt?.toISOString() ?? null,
+        processingAttempts: event.processingAttempts,
+        publishedAt: event.publishedAt?.toISOString() ?? null,
+        publishAttempts: event.publishAttempts,
+        queueJobId: event.queueJobId,
+        status: event.status,
+      })),
+      reconciliationIssues: snapshot.issues.map((issue) =>
+        this.reconciliationIssue(issue),
+      ),
+      reconciliationRuns: snapshot.runs.map((run) => ({
+        checkedCount: run.checkedCount,
+        completedAt: run.completedAt?.toISOString() ?? null,
+        errorCount: run.errorCount,
+        id: run.id,
+        issueCount: run.issueCount,
+        passedCount: run.passedCount,
+        startedAt: run.startedAt.toISOString(),
+        status: run.status,
+        windowEnd: run.windowEnd.toISOString(),
+        windowStart: run.windowStart.toISOString(),
+      })),
+    };
+  }
+
+  async resolveReconciliationIssue(
+    id: string,
+    actorId: string,
+  ): Promise<AdminReconciliationIssueDto> {
+    const issue = await this.adminRepository.resolveReconciliationIssue(
+      id,
+      actorId,
+    );
+    if (!issue) {
+      throw new NotFoundException({
+        code: 'RECONCILIATION_ISSUE_NOT_FOUND',
+        message: 'Reconciliation issue not found.',
+      });
+    }
+    return this.reconciliationIssue(issue);
+  }
+
   async auditLogs(
     query: AdminAuditLogsQueryDto,
   ): Promise<AdminAuditLogsResponseDto> {
@@ -257,6 +353,25 @@ export class AdminService {
       reason: refund.reason,
       status: refund.status,
       updatedAt: refund.updatedAt.toISOString(),
+    };
+  }
+
+  private reconciliationIssue(
+    issue: AdminReconciliationIssueRecord,
+  ): AdminReconciliationIssueDto {
+    return {
+      customerEmail: issue.payment.order.user.email,
+      detectedAt: issue.detectedAt.toISOString(),
+      id: issue.id,
+      issueType: issue.issueType,
+      lastSeenAt: issue.lastSeenAt.toISOString(),
+      localSnapshot: toObject(issue.localSnapshot),
+      orderNo: issue.payment.order.orderNo,
+      paymentId: issue.paymentId,
+      provider: issue.provider,
+      providerSnapshot: toObject(issue.providerSnapshot),
+      resolvedAt: issue.resolvedAt?.toISOString() ?? null,
+      status: issue.status,
     };
   }
 }

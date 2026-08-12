@@ -1182,6 +1182,20 @@ describe('PayFlow API acceptance through Stage 8 (e2e)', () => {
       const refundIds = [firstRefundId, secondRefundId].filter(
         (id): id is string => Boolean(id),
       );
+      const cleanupOrderIds = [stageThreeOrderId, stageThreeRaceOrderId].filter(
+        (id): id is string => Boolean(id),
+      );
+      const cleanupPayments = await database.prisma.payment.findMany({
+        where: { orderId: { in: cleanupOrderIds } },
+        select: { id: true },
+      });
+      await database.prisma.outboxEvent.deleteMany({
+        where: {
+          aggregateId: {
+            in: [...cleanupPayments.map((payment) => payment.id), ...refundIds],
+          },
+        },
+      });
       if (refundIds.length > 0) {
         await database.prisma.auditLog.deleteMany({
           where: { targetId: { in: refundIds } },

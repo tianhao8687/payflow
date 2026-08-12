@@ -68,7 +68,7 @@ describe('StripeProvider payment adapter', () => {
     const provider = createProvider();
     const retrieve = jest
       .fn()
-      .mockResolvedValue(paymentIntent('processing', 'req_lookup'));
+      .mockResolvedValue(paymentIntent('processing', 'req_lookup', 425));
     const capture = jest
       .fn()
       .mockResolvedValue(paymentIntent('succeeded', 'req_capture'));
@@ -80,6 +80,7 @@ describe('StripeProvider payment adapter', () => {
     });
 
     await expect(provider.getPayment('pi_test_unit')).resolves.toMatchObject({
+      refundedAmount: 425,
       status: ProviderPaymentStatus.PROCESSING,
     });
     await expect(
@@ -100,6 +101,9 @@ describe('StripeProvider payment adapter', () => {
       {},
       { idempotencyKey: 'payment:capture:local-id' },
     );
+    expect(retrieve).toHaveBeenCalledWith('pi_test_unit', {
+      expand: ['latest_charge'],
+    });
     expect(cancel).toHaveBeenCalledWith(
       'pi_test_unit',
       {},
@@ -128,12 +132,13 @@ function createProvider(): StripeProvider {
   });
 }
 
-function paymentIntent(status: string, requestId: string) {
+function paymentIntent(status: string, requestId: string, refundedAmount = 0) {
   return {
     amount: 2400,
     currency: 'usd',
     id: 'pi_test_unit',
     lastResponse: { requestId },
+    latest_charge: { amount_refunded: refundedAmount },
     status,
   };
 }

@@ -23,6 +23,8 @@
     "test:e2e": "jest --config ./test/jest-e2e.json --runInBand",
     "test:failure-lab": "jest --config ./test/jest-e2e.json --runInBand --runTestsByPath ./test/failure-lab.e2e-spec.ts",
     "test:stage-8": "jest --config ./test/jest-e2e.json --runInBand --runTestsByPath ./test/stage-8.e2e-spec.ts",
+    "pretest:stage-9": "pnpm run pretest:e2e",
+    "test:stage-9": "jest --config ./test/jest-e2e.json --runInBand --runTestsByPath ./test/stage-9.e2e-spec.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

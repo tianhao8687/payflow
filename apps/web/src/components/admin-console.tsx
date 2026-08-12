@@ -19,6 +19,7 @@ import {
   type CreateRefundResponse,
   type User,
 } from '@/lib/api';
+import { IntegrityPanel } from './integrity-panel';
 
 type AdminTab =
   | 'dashboard'
@@ -27,6 +28,7 @@ type AdminTab =
   | 'refunds'
   | 'webhooks'
   | 'queue'
+  | 'integrity'
   | 'audit';
 
 type ResourceState<T> =
@@ -42,6 +44,7 @@ const tabs: Array<{ id: AdminTab; label: string }> = [
   { id: 'refunds', label: 'Refunds' },
   { id: 'webhooks', label: 'Webhooks' },
   { id: 'queue', label: 'Queue' },
+  { id: 'integrity', label: 'Integrity' },
   { id: 'audit', label: 'Audit log' },
 ];
 
@@ -60,14 +63,14 @@ export function AdminConsole({
         <div className="grid gap-8 px-6 py-8 sm:px-9 sm:py-10 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-end">
           <div>
             <p className="font-mono text-xs font-bold tracking-[0.16em] text-[#71a0ff] uppercase">
-              Stage 08 / Operations
+              Stage 09 / Operations
             </p>
             <h1 className="mt-4 text-4xl font-bold tracking-[-0.06em] sm:text-6xl">
               Payment control room
             </h1>
             <p className="mt-4 max-w-2xl text-sm leading-6 text-[#b9c0cc] sm:text-base">
-              Provider state, asynchronous webhook delivery, queue retries,
-              refunds, and administrator decisions are visible in one console.
+              Provider state, durable event delivery, balanced money entries,
+              reconciliation, and administrator decisions are visible here.
             </p>
           </div>
           <div className="border-l-2 border-[#08ae8c] pl-4 text-sm">
@@ -108,6 +111,7 @@ export function AdminConsole({
         {activeTab === 'refunds' ? <RefundsPanel token={token} /> : null}
         {activeTab === 'webhooks' ? <WebhooksPanel token={token} /> : null}
         {activeTab === 'queue' ? <QueuePanel token={token} /> : null}
+        {activeTab === 'integrity' ? <IntegrityPanel token={token} /> : null}
         {activeTab === 'audit' ? <AuditPanel token={token} /> : null}
       </div>
     </section>
@@ -130,6 +134,14 @@ function DashboardPanel({ token }: { token: string }) {
     },
     { label: 'Failed payments', value: String(dashboard.failedPaymentCount) },
     { label: 'Failed webhooks', value: String(dashboard.failedWebhookCount) },
+    {
+      label: 'Pending outbox',
+      value: String(dashboard.pendingOutboxEventCount),
+    },
+    {
+      label: 'Open reconciliation',
+      value: String(dashboard.openReconciliationIssueCount),
+    },
   ];
 
   return (
@@ -138,11 +150,11 @@ function DashboardPanel({ token }: { token: string }) {
         eyebrow="Live database projection"
         title="Operational snapshot"
       />
-      <div className="mt-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="mt-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
         {cards.map((card, index) => (
           <article
             className={`border p-5 ${
-              index > 1
+              index === 2 || index === 3 || index === 5
                 ? 'border-[#efb6be] bg-[#fff7f8]'
                 : 'border-[#cdd2d9] bg-[#f8f9fb]'
             }`}
@@ -326,7 +338,6 @@ function PaymentsPanel({ token }: { token: string }) {
       endpoint('/admin/payments', {
         page,
         pageSize: 10,
-        provider: 'STRIPE',
         query: query || undefined,
         status: status || undefined,
       }),

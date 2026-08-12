@@ -1,12 +1,12 @@
 # PayFlow architecture
 
-## Current boundary: Stage 8 accepted
+## Current boundary: Stage 9 local acceptance complete
 
-Stage 8 adds a PayPal Sandbox adapter and an asynchronous BullMQ webhook worker
-without changing the locked Order, Payment, Refund, or WebhookEvent domain
-model. The NestJS API remains the sole HTTP/business authorization boundary;
-the worker is a separate process that reuses the same provider-neutral domain
-package and PostgreSQL source of truth.
+Stage 9 extends the existing Stripe/PayPal worker with a transactional outbox,
+an enforced double-entry ledger, and scheduled reconciliation. It does not
+change the locked Order, Payment, Refund, or WebhookEvent ownership rules. The
+NestJS API remains the sole HTTP/business authorization boundary; PostgreSQL
+remains the source of truth.
 
 ```mermaid
 flowchart TB
@@ -77,9 +77,11 @@ flowchart TB
   Webhooks -->|enqueue event UUID| PaymentQueue --> Redis
   Redis --> Worker
   Worker --> PaymentDomain
+  Worker -->|poll outbox + post ledger| DatabaseModule
+  Worker -->|scheduled provider lookup| PaymentCore
   Worker --> StripeProvider
   Worker --> PayPalProvider
-  PaymentDomain --> DatabaseModule
+  PaymentDomain -->|state projection + outbox| DatabaseModule
   Refunds --> DatabaseModule
   Admin --> DatabaseModule
   Users --> DatabaseModule
@@ -97,7 +99,8 @@ flowchart TB
 - Integer minor units for money fields; floating-point money is forbidden.
 - Order and Payment remain separate domain objects when their stages arrive.
 - The business API remains a modular monolith. Provider/domain packages are
-  shared code boundaries, and the Stage 8 worker is the only separate runtime.
+  shared code boundaries, and the Stage 8-introduced worker remains the only
+  separate runtime.
 
 ## Stage 1 identity boundary
 
@@ -259,6 +262,28 @@ flowchart TB
 - A partial unique index permits at most one successful/refunded Payment per
   Order across all providers.
 
+## Stage 9 financial-integrity boundary
+
+- Successful Payment/Order and Refund projections append stable-keyed outbox
+  events inside their existing PostgreSQL transaction. The publisher never
+  derives events by scanning business tables after the fact.
+- The worker polls pending rows, uses the OutboxEvent UUID as a deterministic
+  BullMQ job ID, and records publish/processing attempts. Queue replay is safe;
+  one OutboxEvent can own only one ledger transaction.
+- Payment and refund events post inverse debit/credit pairs in integer minor
+  units. A deferred PostgreSQL constraint trigger rejects fewer than two
+  entries, nonzero signed balance, or account/transaction currency mismatch at
+  commit.
+- A scheduled bounded-lookback job queries the persisted provider adapter and
+  compares amount, currency, normalized status, and an exact refund total when
+  available. Every pass, provider error, and mismatch retains snapshots.
+- Concurrent scans converge on one open issue per payment/type through an
+  advisory lock and partial unique index. ADMIN inspection and idempotent
+  resolution are API-authorized and audited.
+- Stripe reconciliation uses a dedicated test-mode read credential and expanded
+  latest Charge data. PayPal uses the Sandbox capture lookup and reports an
+  unavailable cumulative refund total as `null` rather than a false zero.
+
 ## Data boundary
 
 `users` stores UUID identity, normalized unique email, bcrypt password hash,
@@ -275,8 +300,12 @@ integer amount, lifecycle, reason, and provider failure details. `audit_logs`
 stores administrator/system actor, action, target, JSON metadata, and timestamp.
 `webhook_events` stores the original verified Event JSON, normalized action,
 provider ID/type, delivery count, queue job ID, processing attempt count,
-provider/receive/queue/process timestamps, and a bounded safe processing error;
-none of these tables store card numbers or CVC data added by PayFlow.
+provider/receive/queue/process timestamps, and a bounded safe processing error.
+`outbox_events` owns durable downstream money events and delivery attempts;
+`ledger_accounts`, `ledger_transactions`, and `ledger_entries` own balanced
+accounting effects; reconciliation runs/checks/issues retain local/provider
+snapshots and resolution history. None of these tables store card numbers or CVC
+data added by PayFlow.
 
 ## Runtime topology
 
@@ -286,7 +315,8 @@ Docker Compose starts five services:
 2. `redis` persists BullMQ state with AOF enabled.
 3. `api` applies committed migrations, runs the idempotent admin/product seed,
    then serves REST, health, and Swagger.
-4. `worker` consumes verified webhook-event jobs and updates PostgreSQL.
+4. `worker` consumes verified webhook-event jobs, publishes/processes outbox
+   jobs, posts the ledger, and schedules provider reconciliation.
 5. `web` serves the responsive catalog and browser-based auth surfaces.
 
 The API validates environment variables at startup. Request IDs and the shared
@@ -294,5 +324,4 @@ The API validates environment variables at startup. Request IDs and the shared
 
 ## Deferred boundaries
 
-- Outbox, ledger, and reconciliation — Stage 9.
 - OpenTelemetry and portfolio packaging — Stage 10.

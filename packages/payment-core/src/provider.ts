@@ -68,6 +68,7 @@ export interface ProviderPayment {
   currency: string;
   providerPaymentId: string;
   providerRequestId: string | null;
+  refundedAmount: number | null;
   status: ProviderPaymentStatus;
 }
 

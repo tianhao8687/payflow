@@ -101,6 +101,7 @@ class StageEightProvider implements PaymentProvider {
       currency: session.currency,
       providerPaymentId: `paypal-capture-${session.paymentId}`,
       providerRequestId: 'paypal-capture-request',
+      refundedAmount: 0,
       status: ProviderPaymentStatus.SUCCEEDED,
     };
   }
@@ -454,6 +455,13 @@ describe('PayFlow Stage 8 PayPal and BullMQ acceptance (e2e)', () => {
     if (database) {
       await database.prisma.webhookEvent.deleteMany({
         where: { providerEventId: { startsWith: 'stage-8-' } },
+      });
+      const payments = await database.prisma.payment.findMany({
+        where: { orderId: { in: orderIds } },
+        select: { id: true },
+      });
+      await database.prisma.outboxEvent.deleteMany({
+        where: { aggregateId: { in: payments.map((payment) => payment.id) } },
       });
       await database.prisma.payment.deleteMany({
         where: { orderId: { in: orderIds } },

@@ -601,6 +601,20 @@ describe('PayFlow Stage 6 Failure Lab (e2e)', () => {
         where: { payment: { orderId: { in: orderIds } } },
         select: { id: true },
       });
+      const payments = await database.prisma.payment.findMany({
+        where: { orderId: { in: orderIds } },
+        select: { id: true },
+      });
+      await database.prisma.outboxEvent.deleteMany({
+        where: {
+          aggregateId: {
+            in: [
+              ...payments.map((payment) => payment.id),
+              ...refunds.map((refund) => refund.id),
+            ],
+          },
+        },
+      });
       if (refunds.length > 0) {
         await database.prisma.auditLog.deleteMany({
           where: { targetId: { in: refunds.map((refund) => refund.id) } },

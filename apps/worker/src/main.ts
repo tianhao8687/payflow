@@ -6,6 +6,7 @@ import { PayPalProvider } from '@payflow/payment-paypal';
 import { StripeProvider } from '@payflow/payment-stripe';
 
 import { startWebhookWorker } from './worker-runtime';
+import { startIntegrityRuntime } from './integrity-runtime';
 
 async function bootstrap(): Promise<void> {
   const environment = readEnvironment(process.env);
@@ -13,8 +14,8 @@ async function bootstrap(): Promise<void> {
   const providers = new PaymentProviderRegistry([
     new StripeProvider({
       appName: 'PayFlow Worker',
-      appVersion: '0.8.0',
-      secretKey: '',
+      appVersion: '0.9.0',
+      secretKey: environment.stripeReconciliationKey,
       webhookSecret: '',
     }),
     new PayPalProvider({
@@ -31,6 +32,15 @@ async function bootstrap(): Promise<void> {
     providers,
     redisUrl: environment.redisUrl,
   });
+  const integrity = startIntegrityRuntime({
+    outboxConcurrency: environment.outboxConcurrency,
+    outboxPollIntervalMs: environment.outboxPollIntervalMs,
+    prisma,
+    providers,
+    reconciliationIntervalMs: environment.reconciliationIntervalMs,
+    reconciliationLookbackMs: environment.reconciliationLookbackMs,
+    redisUrl: environment.redisUrl,
+  });
 
   worker.on('ready', () => {
     console.info('PayFlow webhook worker is ready.');
@@ -45,6 +55,19 @@ async function bootstrap(): Promise<void> {
   worker.on('error', (error) => {
     console.error('PayFlow webhook worker error.', { message: error.message });
   });
+  integrity.outboxWorker.on('ready', () => {
+    console.info('PayFlow outbox worker is ready.');
+  });
+  integrity.outboxWorker.on('failed', (job, error) => {
+    console.error('PayFlow outbox job failed.', {
+      attemptsMade: job?.attemptsMade,
+      jobId: job?.id,
+      message: error.message,
+    });
+  });
+  integrity.outboxWorker.on('error', (error) => {
+    console.error('PayFlow outbox worker error.', { message: error.message });
+  });
 
   let closing = false;
   async function shutdown(): Promise<void> {
@@ -52,7 +75,7 @@ async function bootstrap(): Promise<void> {
       return;
     }
     closing = true;
-    await worker.close();
+    await Promise.all([worker.close(), integrity.close()]);
     await prisma.$disconnect();
   }
 
@@ -65,15 +88,29 @@ void bootstrap();
 interface WorkerEnvironment {
   concurrency: number;
   databaseUrl: string;
+  outboxConcurrency: number;
+  outboxPollIntervalMs: number;
   paypalClientId: string;
   paypalClientSecret: string;
+  reconciliationIntervalMs: number;
+  reconciliationLookbackMs: number;
   redisUrl: string;
+  stripeReconciliationKey: string;
 }
 
 function readEnvironment(values: NodeJS.ProcessEnv): WorkerEnvironment {
   const databaseUrl = values.DATABASE_URL ?? '';
   const redisUrl = values.REDIS_URL ?? '';
   const concurrency = Number(values.WEBHOOK_WORKER_CONCURRENCY ?? 8);
+  const outboxConcurrency = Number(values.OUTBOX_WORKER_CONCURRENCY ?? 4);
+  const outboxPollIntervalMs = Number(values.OUTBOX_POLL_INTERVAL_MS ?? 500);
+  const reconciliationIntervalMs = Number(
+    values.RECONCILIATION_INTERVAL_MS ?? 900_000,
+  );
+  const reconciliationLookbackMs = Number(
+    values.RECONCILIATION_LOOKBACK_MS ?? 86_400_000,
+  );
+  const stripeReconciliationKey = values.STRIPE_RECONCILIATION_KEY ?? '';
 
   if (!databaseUrl.startsWith('postgresql://')) {
     throw new Error('DATABASE_URL must be a PostgreSQL connection URL.');
@@ -84,6 +121,39 @@ function readEnvironment(values: NodeJS.ProcessEnv): WorkerEnvironment {
   if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > 64) {
     throw new Error('WEBHOOK_WORKER_CONCURRENCY must be between 1 and 64.');
   }
+  if (
+    !Number.isInteger(outboxConcurrency) ||
+    outboxConcurrency < 1 ||
+    outboxConcurrency > 32
+  ) {
+    throw new Error('OUTBOX_WORKER_CONCURRENCY must be between 1 and 32.');
+  }
+  if (!Number.isInteger(outboxPollIntervalMs) || outboxPollIntervalMs < 100) {
+    throw new Error('OUTBOX_POLL_INTERVAL_MS must be at least 100.');
+  }
+  if (
+    !Number.isInteger(reconciliationIntervalMs) ||
+    reconciliationIntervalMs < 60_000
+  ) {
+    throw new Error('RECONCILIATION_INTERVAL_MS must be at least 60000.');
+  }
+  if (
+    !Number.isInteger(reconciliationLookbackMs) ||
+    reconciliationLookbackMs < reconciliationIntervalMs
+  ) {
+    throw new Error(
+      'RECONCILIATION_LOOKBACK_MS must be at least the reconciliation interval.',
+    );
+  }
+  if (
+    stripeReconciliationKey &&
+    !stripeReconciliationKey.startsWith('rk_test_') &&
+    !stripeReconciliationKey.startsWith('sk_test_')
+  ) {
+    throw new Error(
+      'STRIPE_RECONCILIATION_KEY must be a Stripe test-mode restricted or secret key.',
+    );
+  }
   if ((values.PAYPAL_ENV ?? 'sandbox') !== 'sandbox') {
     throw new Error(
       'Only PayPal sandbox mode is allowed in this implementation.',
@@ -93,8 +163,13 @@ function readEnvironment(values: NodeJS.ProcessEnv): WorkerEnvironment {
   return {
     concurrency,
     databaseUrl,
+    outboxConcurrency,
+    outboxPollIntervalMs,
     paypalClientId: values.PAYPAL_CLIENT_ID ?? '',
     paypalClientSecret: values.PAYPAL_CLIENT_SECRET ?? '',
+    reconciliationIntervalMs,
+    reconciliationLookbackMs,
     redisUrl,
+    stripeReconciliationKey,
   };
 }

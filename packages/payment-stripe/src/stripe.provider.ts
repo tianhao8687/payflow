@@ -135,8 +135,10 @@ export class StripeProvider implements PaymentProvider {
     this.assertConfigured(PaymentProviderCapability.PAYMENT, 'GET_PAYMENT');
 
     try {
-      const paymentIntent =
-        await this.stripe.paymentIntents.retrieve(providerPaymentId);
+      const paymentIntent = await this.stripe.paymentIntents.retrieve(
+        providerPaymentId,
+        { expand: ['latest_charge'] },
+      );
       return this.toProviderPayment(paymentIntent);
     } catch (error: unknown) {
       this.throwProviderError(
@@ -338,6 +340,7 @@ export class StripeProvider implements PaymentProvider {
       currency: paymentIntent.currency.toUpperCase(),
       providerPaymentId: paymentIntent.id,
       providerRequestId: paymentIntent.lastResponse?.requestId ?? null,
+      refundedAmount: stripeRefundedAmount(paymentIntent.latest_charge),
       status: this.mapPaymentStatus(paymentIntent.status),
     };
   }
@@ -391,4 +394,12 @@ function expandableId(value: string | { id: string } | null): string | null {
   }
 
   return value?.id ?? null;
+}
+
+function stripeRefundedAmount(
+  value: string | Stripe.Charge | null,
+): number | null {
+  return typeof value === 'object' && value !== null
+    ? value.amount_refunded
+    : null;
 }

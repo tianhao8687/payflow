@@ -20,6 +20,7 @@ import {
 } from '@payflow/payment-core';
 
 import { applyProviderRefundSnapshot } from './refund-projection';
+import { appendPaymentSucceededEvent } from './outbox';
 import {
   InvalidOrderTransitionError,
   InvalidPaymentTransitionError,
@@ -433,6 +434,18 @@ export class WebhookEventStore {
       await transaction.order.update({
         where: { id: payment.order.id },
         data: { status: OrderStatus.PAID },
+      });
+    }
+
+    if (targetStatus === PaymentStatus.SUCCEEDED) {
+      await appendPaymentSucceededEvent(transaction, {
+        amount: payment.amount,
+        currency: payment.currency,
+        orderId: payment.orderId,
+        paymentId: payment.id,
+        provider,
+        providerPaymentId:
+          payment.providerPaymentId ?? action.providerPaymentId!,
       });
     }
 

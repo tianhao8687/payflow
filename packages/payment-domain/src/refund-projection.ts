@@ -10,6 +10,7 @@ import {
   assertPaymentTransition,
   assertRefundTransition,
 } from './state-machines';
+import { appendRefundSucceededEvent } from './outbox';
 
 export interface ProviderRefundSnapshot {
   amount: number;
@@ -142,6 +143,18 @@ export async function applyProviderRefundSnapshot(
     await transaction.order.update({
       where: { id: refund.payment.order.id },
       data: { status: projection.orderStatus },
+    });
+  }
+
+  if (snapshot.status === RefundStatus.SUCCEEDED) {
+    await appendRefundSucceededEvent(transaction, {
+      amount: refund.amount,
+      currency: refund.payment.currency,
+      orderId: refund.payment.orderId,
+      paymentId: refund.paymentId,
+      provider: refund.payment.provider,
+      providerPaymentId: refund.payment.providerPaymentId,
+      refundId: refund.id,
     });
   }
 

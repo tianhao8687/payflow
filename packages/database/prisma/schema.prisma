@@ -61,14 +61,50 @@ enum AuditActorType {
   SYSTEM
 }
 
+enum OutboxEventStatus {
+  PENDING
+  PUBLISHED
+  PROCESSED
+  FAILED
+}
+
+enum LedgerDirection {
+  DEBIT
+  CREDIT
+}
+
+enum LedgerTransactionType {
+  PAYMENT
+  REFUND
+}
+
+enum ReconciliationRunStatus {
+  RUNNING
+  COMPLETED
+  COMPLETED_WITH_ERRORS
+}
+
+enum ReconciliationIssueStatus {
+  OPEN
+  RESOLVED
+}
+
+enum ReconciliationIssueType {
+  AMOUNT_MISMATCH
+  CURRENCY_MISMATCH
+  STATUS_MISMATCH
+  REFUND_TOTAL_MISMATCH
+}
+
 model User {
-  id           String     @id @default(uuid()) @db.Uuid
-  email        String     @unique @db.VarChar(320)
-  passwordHash String     @map("password_hash") @db.VarChar(100)
-  role         Role       @default(USER)
-  createdAt    DateTime   @default(now()) @map("created_at") @db.Timestamptz(3)
-  orders       Order[]
-  auditLogs    AuditLog[]
+  id                           String                @id @default(uuid()) @db.Uuid
+  email                        String                @unique @db.VarChar(320)
+  passwordHash                 String                @map("password_hash") @db.VarChar(100)
+  role                         Role                  @default(USER)
+  createdAt                    DateTime              @default(now()) @map("created_at") @db.Timestamptz(3)
+  orders                       Order[]
+  auditLogs                    AuditLog[]
+  resolvedReconciliationIssues ReconciliationIssue[] @relation("ReconciliationIssueResolver")
 
   @@map("users")
 }
@@ -123,23 +159,25 @@ model OrderItem {
 }
 
 model Payment {
-  id                        String           @id @default(uuid()) @db.Uuid
-  orderId                   String           @map("order_id") @db.Uuid
+  id                        String                @id @default(uuid()) @db.Uuid
+  orderId                   String                @map("order_id") @db.Uuid
   provider                  PaymentProvider
-  status                    PaymentStatus    @default(CREATED)
+  status                    PaymentStatus         @default(CREATED)
   amount                    Int
-  currency                  String           @db.Char(3)
-  providerPaymentId         String?          @map("provider_payment_id") @db.VarChar(255)
-  providerCheckoutSessionId String?          @unique @map("provider_checkout_session_id") @db.VarChar(255)
-  checkoutUrl               String?          @map("checkout_url") @db.Text
-  checkoutExpiresAt         DateTime?        @map("checkout_expires_at") @db.Timestamptz(3)
-  idempotencyKey            String           @unique @map("idempotency_key") @db.VarChar(255)
-  attemptNo                 Int              @map("attempt_no")
-  createdAt                 DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt                 DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
-  order                     Order            @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  currency                  String                @db.Char(3)
+  providerPaymentId         String?               @map("provider_payment_id") @db.VarChar(255)
+  providerCheckoutSessionId String?               @unique @map("provider_checkout_session_id") @db.VarChar(255)
+  checkoutUrl               String?               @map("checkout_url") @db.Text
+  checkoutExpiresAt         DateTime?             @map("checkout_expires_at") @db.Timestamptz(3)
+  idempotencyKey            String                @unique @map("idempotency_key") @db.VarChar(255)
+  attemptNo                 Int                   @map("attempt_no")
+  createdAt                 DateTime              @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt                 DateTime              @updatedAt @map("updated_at") @db.Timestamptz(3)
+  order                     Order                 @relation(fields: [orderId], references: [id], onDelete: Restrict)
   attempts                  PaymentAttempt[]
   refunds                   Refund[]
+  reconciliationChecks      ReconciliationCheck[]
+  reconciliationIssues      ReconciliationIssue[]
 
   @@unique([provider, providerPaymentId])
   @@unique([orderId, provider, attemptNo])
@@ -182,8 +220,8 @@ model WebhookEvent {
   lastProcessingStartedAt DateTime?          @map("last_processing_started_at") @db.Timestamptz(3)
   processedAt             DateTime?          @map("processed_at") @db.Timestamptz(3)
 
-  @@index([provider, receivedAt])
   @@unique([provider, providerEventId])
+  @@index([provider, receivedAt])
   @@index([status, receivedAt])
   @@index([eventType, receivedAt])
   @@index([queueJobId])
@@ -228,4 +266,139 @@ model AuditLog {
   @@index([targetType, targetId, createdAt])
   @@index([createdAt])
   @@map("audit_logs")
+}
+
+model OutboxEvent {
+  id                 String             @id @default(uuid()) @db.Uuid
+  eventKey           String             @unique @map("event_key") @db.VarChar(255)
+  aggregateType      String             @map("aggregate_type") @db.VarChar(100)
+  aggregateId        String             @map("aggregate_id") @db.Uuid
+  eventType          String             @map("event_type") @db.VarChar(100)
+  payloadJson        Json               @map("payload_json") @db.JsonB
+  status             OutboxEventStatus  @default(PENDING)
+  publishAttempts    Int                @default(0) @map("publish_attempts")
+  processingAttempts Int                @default(0) @map("processing_attempts")
+  queueJobId         String?            @map("queue_job_id") @db.VarChar(255)
+  lastError          String?            @map("last_error") @db.VarChar(500)
+  createdAt          DateTime           @default(now()) @map("created_at") @db.Timestamptz(3)
+  publishedAt        DateTime?          @map("published_at") @db.Timestamptz(3)
+  processedAt        DateTime?          @map("processed_at") @db.Timestamptz(3)
+  ledgerTransaction  LedgerTransaction?
+
+  @@index([status, createdAt])
+  @@index([aggregateType, aggregateId, createdAt])
+  @@index([eventType, createdAt])
+  @@index([queueJobId])
+  @@map("outbox_events")
+}
+
+model LedgerAccount {
+  id        String        @id @default(uuid()) @db.Uuid
+  code      String        @db.VarChar(100)
+  name      String        @db.VarChar(160)
+  currency  String        @db.Char(3)
+  createdAt DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+  entries   LedgerEntry[]
+
+  @@unique([code, currency])
+  @@index([currency, code])
+  @@map("ledger_accounts")
+}
+
+model LedgerTransaction {
+  id              String                @id @default(uuid()) @db.Uuid
+  outboxEventId   String                @unique @map("outbox_event_id") @db.Uuid
+  transactionType LedgerTransactionType @map("transaction_type")
+  referenceType   String                @map("reference_type") @db.VarChar(100)
+  referenceId     String                @map("reference_id") @db.Uuid
+  currency        String                @db.Char(3)
+  createdAt       DateTime              @default(now()) @map("created_at") @db.Timestamptz(3)
+  outboxEvent     OutboxEvent           @relation(fields: [outboxEventId], references: [id], onDelete: Restrict)
+  entries         LedgerEntry[]
+
+  @@index([referenceType, referenceId, createdAt])
+  @@index([transactionType, createdAt])
+  @@map("ledger_transactions")
+}
+
+model LedgerEntry {
+  id            String            @id @default(uuid()) @db.Uuid
+  transactionId String            @map("transaction_id") @db.Uuid
+  accountId     String            @map("account_id") @db.Uuid
+  direction     LedgerDirection
+  amount        Int
+  currency      String            @db.Char(3)
+  createdAt     DateTime          @default(now()) @map("created_at") @db.Timestamptz(3)
+  transaction   LedgerTransaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+  account       LedgerAccount     @relation(fields: [accountId], references: [id], onDelete: Restrict)
+
+  @@unique([transactionId, accountId, direction])
+  @@index([accountId, createdAt])
+  @@index([transactionId])
+  @@map("ledger_entries")
+}
+
+model ReconciliationRun {
+  id           String                  @id @default(uuid()) @db.Uuid
+  status       ReconciliationRunStatus @default(RUNNING)
+  windowStart  DateTime                @map("window_start") @db.Timestamptz(3)
+  windowEnd    DateTime                @map("window_end") @db.Timestamptz(3)
+  checkedCount Int                     @default(0) @map("checked_count")
+  passedCount  Int                     @default(0) @map("passed_count")
+  issueCount   Int                     @default(0) @map("issue_count")
+  errorCount   Int                     @default(0) @map("error_count")
+  startedAt    DateTime                @default(now()) @map("started_at") @db.Timestamptz(3)
+  completedAt  DateTime?               @map("completed_at") @db.Timestamptz(3)
+  checks       ReconciliationCheck[]
+  issues       ReconciliationIssue[]
+
+  @@index([startedAt])
+  @@index([status, startedAt])
+  @@map("reconciliation_runs")
+}
+
+model ReconciliationCheck {
+  id               String                @id @default(uuid()) @db.Uuid
+  runId            String                @map("run_id") @db.Uuid
+  paymentId        String                @map("payment_id") @db.Uuid
+  provider         PaymentProvider
+  matched          Boolean
+  localSnapshot    Json                  @map("local_snapshot") @db.JsonB
+  providerSnapshot Json?                 @map("provider_snapshot") @db.JsonB
+  error            String?               @db.VarChar(500)
+  checkedAt        DateTime              @default(now()) @map("checked_at") @db.Timestamptz(3)
+  run              ReconciliationRun     @relation(fields: [runId], references: [id], onDelete: Cascade)
+  payment          Payment               @relation(fields: [paymentId], references: [id], onDelete: Restrict)
+  issues           ReconciliationIssue[]
+
+  @@unique([runId, paymentId])
+  @@index([paymentId, checkedAt])
+  @@index([matched, checkedAt])
+  @@map("reconciliation_checks")
+}
+
+model ReconciliationIssue {
+  id               String                    @id @default(uuid()) @db.Uuid
+  runId            String                    @map("run_id") @db.Uuid
+  checkId          String                    @map("check_id") @db.Uuid
+  paymentId        String                    @map("payment_id") @db.Uuid
+  provider         PaymentProvider
+  issueType        ReconciliationIssueType   @map("issue_type")
+  localSnapshot    Json                      @map("local_snapshot") @db.JsonB
+  providerSnapshot Json                      @map("provider_snapshot") @db.JsonB
+  status           ReconciliationIssueStatus @default(OPEN)
+  detectedAt       DateTime                  @default(now()) @map("detected_at") @db.Timestamptz(3)
+  lastSeenAt       DateTime                  @default(now()) @map("last_seen_at") @db.Timestamptz(3)
+  resolvedAt       DateTime?                 @map("resolved_at") @db.Timestamptz(3)
+  resolvedById     String?                   @map("resolved_by_id") @db.Uuid
+  run              ReconciliationRun         @relation(fields: [runId], references: [id], onDelete: Restrict)
+  check            ReconciliationCheck       @relation(fields: [checkId], references: [id], onDelete: Restrict)
+  payment          Payment                   @relation(fields: [paymentId], references: [id], onDelete: Restrict)
+  resolvedBy       User?                     @relation("ReconciliationIssueResolver", fields: [resolvedById], references: [id], onDelete: SetNull)
+
+  @@index([status, detectedAt])
+  @@index([provider, status, detectedAt])
+  @@index([paymentId, detectedAt])
+  @@index([runId])
+  @@map("reconciliation_issues")
 }

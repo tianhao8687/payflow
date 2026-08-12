@@ -1,9 +1,15 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
   AuditActorType,
+  LedgerDirection,
+  LedgerTransactionType,
   OrderStatus,
+  OutboxEventStatus,
   PaymentProvider,
   PaymentStatus,
+  ReconciliationIssueStatus,
+  ReconciliationIssueType,
+  ReconciliationRunStatus,
   RefundStatus,
   WebhookEventStatus,
 } from '@payflow/database';
@@ -34,6 +40,189 @@ export class AdminDashboardResponseDto {
 
   @ApiProperty()
   failedWebhookCount!: number;
+
+  @ApiProperty()
+  pendingOutboxEventCount!: number;
+
+  @ApiProperty()
+  openReconciliationIssueCount!: number;
+}
+
+export class AdminOutboxEventDto {
+  @ApiProperty({ format: 'uuid' })
+  id!: string;
+
+  @ApiProperty()
+  eventKey!: string;
+
+  @ApiProperty()
+  aggregateType!: string;
+
+  @ApiProperty({ format: 'uuid' })
+  aggregateId!: string;
+
+  @ApiProperty()
+  eventType!: string;
+
+  @ApiProperty({ enum: OutboxEventStatus })
+  status!: OutboxEventStatus;
+
+  @ApiProperty()
+  publishAttempts!: number;
+
+  @ApiProperty()
+  processingAttempts!: number;
+
+  @ApiPropertyOptional()
+  queueJobId!: string | null;
+
+  @ApiPropertyOptional()
+  lastError!: string | null;
+
+  @ApiProperty({ format: 'date-time' })
+  createdAt!: string;
+
+  @ApiPropertyOptional({ format: 'date-time' })
+  publishedAt!: string | null;
+
+  @ApiPropertyOptional({ format: 'date-time' })
+  processedAt!: string | null;
+}
+
+export class AdminLedgerEntryDto {
+  @ApiProperty({ format: 'uuid' })
+  id!: string;
+
+  @ApiProperty()
+  accountCode!: string;
+
+  @ApiProperty()
+  accountName!: string;
+
+  @ApiProperty({ enum: LedgerDirection })
+  direction!: LedgerDirection;
+
+  @ApiProperty()
+  amount!: number;
+
+  @ApiProperty()
+  currency!: string;
+}
+
+export class AdminLedgerTransactionDto {
+  @ApiProperty({ format: 'uuid' })
+  id!: string;
+
+  @ApiProperty({ format: 'uuid' })
+  outboxEventId!: string;
+
+  @ApiProperty({ enum: LedgerTransactionType })
+  transactionType!: LedgerTransactionType;
+
+  @ApiProperty()
+  referenceType!: string;
+
+  @ApiProperty({ format: 'uuid' })
+  referenceId!: string;
+
+  @ApiProperty()
+  currency!: string;
+
+  @ApiProperty({ description: 'Debit minus credit in minor units.' })
+  balance!: number;
+
+  @ApiProperty({ type: [AdminLedgerEntryDto] })
+  entries!: AdminLedgerEntryDto[];
+
+  @ApiProperty({ format: 'date-time' })
+  createdAt!: string;
+}
+
+export class AdminReconciliationRunDto {
+  @ApiProperty({ format: 'uuid' })
+  id!: string;
+
+  @ApiProperty({ enum: ReconciliationRunStatus })
+  status!: ReconciliationRunStatus;
+
+  @ApiProperty()
+  checkedCount!: number;
+
+  @ApiProperty()
+  passedCount!: number;
+
+  @ApiProperty()
+  issueCount!: number;
+
+  @ApiProperty()
+  errorCount!: number;
+
+  @ApiProperty({ format: 'date-time' })
+  windowStart!: string;
+
+  @ApiProperty({ format: 'date-time' })
+  windowEnd!: string;
+
+  @ApiProperty({ format: 'date-time' })
+  startedAt!: string;
+
+  @ApiPropertyOptional({ format: 'date-time' })
+  completedAt!: string | null;
+}
+
+export class AdminReconciliationIssueDto {
+  @ApiProperty({ format: 'uuid' })
+  id!: string;
+
+  @ApiProperty({ format: 'uuid' })
+  paymentId!: string;
+
+  @ApiProperty()
+  orderNo!: string;
+
+  @ApiProperty()
+  customerEmail!: string;
+
+  @ApiProperty({ enum: PaymentProvider })
+  provider!: PaymentProvider;
+
+  @ApiProperty({ enum: ReconciliationIssueType })
+  issueType!: ReconciliationIssueType;
+
+  @ApiProperty({ enum: ReconciliationIssueStatus })
+  status!: ReconciliationIssueStatus;
+
+  @ApiProperty({ type: 'object', additionalProperties: true })
+  localSnapshot!: Record<string, unknown>;
+
+  @ApiProperty({ type: 'object', additionalProperties: true })
+  providerSnapshot!: Record<string, unknown>;
+
+  @ApiProperty({ format: 'date-time' })
+  detectedAt!: string;
+
+  @ApiProperty({ format: 'date-time' })
+  lastSeenAt!: string;
+
+  @ApiPropertyOptional({ format: 'date-time' })
+  resolvedAt!: string | null;
+}
+
+export class AdminIntegrityResponseDto {
+  @ApiProperty({ additionalProperties: { type: 'number' }, type: 'object' })
+  outboxCounts!: Record<string, number>;
+
+  @ApiProperty({ type: [AdminOutboxEventDto] })
+  outboxEvents!: AdminOutboxEventDto[];
+
+  @ApiProperty({ type: [AdminLedgerTransactionDto] })
+  ledgerTransactions!: AdminLedgerTransactionDto[];
+
+  @ApiProperty({ type: [AdminReconciliationRunDto] })
+  reconciliationRuns!: AdminReconciliationRunDto[];
+
+  @ApiProperty({ type: [AdminReconciliationIssueDto] })
+  reconciliationIssues!: AdminReconciliationIssueDto[];
 }
 
 export class AdminPaginationMetaDto {

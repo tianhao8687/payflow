@@ -4,11 +4,12 @@ PayFlow is a full-stack payment-system portfolio project implemented one
 acceptance-gated stage at a time from the accompanying Codex implementation
 specification.
 
-> Current delivery: **Stage 8 — PayPal + Queue (accepted)**.
-> Stripe Test and PayPal Sandbox share one provider-neutral business boundary;
-> verified webhooks are persisted, queued in BullMQ, and processed by a worker
-> with bounded, observable retries. All specified Stage 8 local and remote
-> gates pass; Stage 9 may begin.
+> Current delivery: **Stage 9 — Outbox + Ledger + Reconciliation (remote gate
+> pending)**. Successful money-state transitions append a transactional outbox,
+> the worker posts database-enforced balanced ledger pairs, and scheduled
+> provider reconciliation exposes audited differences to ADMIN. All local Stage
+> 9 gates pass; Stage 10 remains blocked until the committed remote workflow
+> passes.
 
 ## Current architecture
 
@@ -31,7 +32,9 @@ flowchart LR
   Webhooks -->|verify + durable receive| DB
   Webhooks -->|WebhookEvent UUID| Queue[(Redis / BullMQ)]
   Queue --> Worker[Webhook worker]
-  Worker -->|locked state projection| DB
+  Worker -->|locked state projection + outbox| DB
+  Worker -->|poll + publish money events| Queue
+  Worker -->|balanced ledger + reconciliation| DB
   Worker --> Registry
   Browser -->|Bearer JWT| Protected[Protected API boundary]
   Protected --> RBAC{USER or ADMIN}
@@ -118,30 +121,32 @@ docker compose down
 
 ## Current API
 
-| Method | Path                          | Access | Purpose                                    |
-| ------ | ----------------------------- | ------ | ------------------------------------------ |
-| POST   | `/auth/register`              | Public | Create a USER and issue a JWT              |
-| POST   | `/auth/login`                 | Public | Verify credentials and issue JWT           |
-| GET    | `/auth/me`                    | JWT    | Return the safe current-user DTO           |
-| GET    | `/products`                   | Public | List active products                       |
-| GET    | `/products/:id`               | Public | Read one active product                    |
-| POST   | `/orders`                     | JWT    | Create a server-priced order               |
-| GET    | `/orders`                     | JWT    | List current user's orders                 |
-| GET    | `/orders/:id`                 | JWT    | Read owned order, payments, and refunds    |
-| POST   | `/orders/:id/cancel`          | JWT    | Cancel an owned pending order              |
-| POST   | `/payments/checkout-session`  | JWT    | Create/reuse Stripe or PayPal checkout     |
-| GET    | `/payments/:id`               | JWT    | Read an owned local payment and refunds    |
-| POST   | `/webhooks/stripe`            | Public | Verify, persist, and queue a Stripe Event  |
-| POST   | `/webhooks/paypal`            | Public | Verify, persist, and queue a PayPal Event  |
-| GET    | `/admin/profile`              | ADMIN  | Verify the administrator boundary          |
-| GET    | `/admin/dashboard`            | ADMIN  | Read payment-system operational counters   |
-| GET    | `/admin/orders[/:id]`         | ADMIN  | Paginate/search and inspect orders         |
-| GET    | `/admin/payments[/:id]`       | ADMIN  | Paginate/search payments and attempts      |
-| POST   | `/admin/payments/:id/refunds` | ADMIN  | Create idempotent full/partial refund      |
-| GET    | `/admin/refunds`              | ADMIN  | Paginate provider refund outcomes          |
-| GET    | `/admin/webhooks`             | ADMIN  | Inspect event duplicates and failures      |
-| GET    | `/admin/queues/webhooks`      | ADMIN  | Inspect queue state, retries, and failures |
-| GET    | `/admin/audit-logs`           | ADMIN  | Inspect actor/reason/target history        |
+| Method | Path                                       | Access | Purpose                                    |
+| ------ | ------------------------------------------ | ------ | ------------------------------------------ |
+| POST   | `/auth/register`                           | Public | Create a USER and issue a JWT              |
+| POST   | `/auth/login`                              | Public | Verify credentials and issue JWT           |
+| GET    | `/auth/me`                                 | JWT    | Return the safe current-user DTO           |
+| GET    | `/products`                                | Public | List active products                       |
+| GET    | `/products/:id`                            | Public | Read one active product                    |
+| POST   | `/orders`                                  | JWT    | Create a server-priced order               |
+| GET    | `/orders`                                  | JWT    | List current user's orders                 |
+| GET    | `/orders/:id`                              | JWT    | Read owned order, payments, and refunds    |
+| POST   | `/orders/:id/cancel`                       | JWT    | Cancel an owned pending order              |
+| POST   | `/payments/checkout-session`               | JWT    | Create/reuse Stripe or PayPal checkout     |
+| GET    | `/payments/:id`                            | JWT    | Read an owned local payment and refunds    |
+| POST   | `/webhooks/stripe`                         | Public | Verify, persist, and queue a Stripe Event  |
+| POST   | `/webhooks/paypal`                         | Public | Verify, persist, and queue a PayPal Event  |
+| GET    | `/admin/profile`                           | ADMIN  | Verify the administrator boundary          |
+| GET    | `/admin/dashboard`                         | ADMIN  | Read payment-system operational counters   |
+| GET    | `/admin/orders[/:id]`                      | ADMIN  | Paginate/search and inspect orders         |
+| GET    | `/admin/payments[/:id]`                    | ADMIN  | Paginate/search payments and attempts      |
+| POST   | `/admin/payments/:id/refunds`              | ADMIN  | Create idempotent full/partial refund      |
+| GET    | `/admin/refunds`                           | ADMIN  | Paginate provider refund outcomes          |
+| GET    | `/admin/webhooks`                          | ADMIN  | Inspect event duplicates and failures      |
+| GET    | `/admin/queues/webhooks`                   | ADMIN  | Inspect queue state, retries, and failures |
+| GET    | `/admin/integrity`                         | ADMIN  | Inspect outbox, ledger, and reconciliation |
+| PATCH  | `/admin/reconciliation/issues/:id/resolve` | ADMIN  | Resolve and audit a difference             |
+| GET    | `/admin/audit-logs`                        | ADMIN  | Inspect actor/reason/target history        |
 
 Public registration cannot choose a role. Order creation accepts only product
 IDs and quantities; any client price field is rejected, and accepted totals are
@@ -176,6 +181,12 @@ never be committed, logged, or embedded in browser code.
 PayPal is disabled until `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET`, and the
 Sandbox endpoint's `PAYPAL_WEBHOOK_ID` are configured. `PAYPAL_ENV` is locked to
 `sandbox`; live PayPal operation is rejected.
+
+Scheduled Stripe reconciliation uses the worker-only
+`STRIPE_RECONCILIATION_KEY`. Prefer a restricted test key with PaymentIntent and
+Charge read access; a normal test secret key is accepted only as a local sandbox
+fallback. Outbox polling/concurrency and reconciliation interval/lookback are
+documented in [`docs/reconciliation.md`](docs/reconciliation.md).
 
 Webhook processing also fails closed until `STRIPE_WEBHOOK_SECRET` contains the
 signing secret for the exact Stripe sandbox endpoint. For local forwarding, use
@@ -217,6 +228,13 @@ pnpm test:e2e
 pnpm --filter @payflow/payment-queue test
 ```
 
+Run only the Stage 9 financial-integrity acceptance:
+
+```powershell
+$env:RUN_REDIS_INTEGRATION = 'true'
+pnpm test:stage-9
+```
+
 Run only the ten Stage 6 failure scenarios:
 
 ```powershell
@@ -236,11 +254,10 @@ recovery and invariants.
 The GitHub Actions workflow starts PostgreSQL 18 and Redis 8.8, scans tracked
 files for payment secrets, applies every migration, seeds the sandbox, and runs
 both adapter packages, BullMQ retry integration, the API E2E suite, and all ten
-Failure Lab scenarios. Stage 8 implementation/acceptance evidence is recorded
-in [`docs/stages/stage-8.md`](docs/stages/stage-8.md), the provider contract in
-[`docs/provider-adapter.md`](docs/provider-adapter.md), and the unchanged
-Failure Lab evidence in
-[`docs/failure-lab-report.md`](docs/failure-lab-report.md).
+Failure Lab scenarios. Stage 9 implementation/acceptance evidence is recorded
+in [`docs/stages/stage-9.md`](docs/stages/stage-9.md), the financial integrity
+design in [`docs/reconciliation.md`](docs/reconciliation.md), and the provider
+contract in [`docs/provider-adapter.md`](docs/provider-adapter.md).
 
 ## Workspace layout
 
@@ -248,7 +265,7 @@ Failure Lab evidence in
 apps/
   web/        Next.js 16 App Router and Tailwind CSS
   api/        NestJS 11 modular-monolith REST API and Swagger
-  worker/     BullMQ webhook processor (no public HTTP surface)
+  worker/     Webhook/outbox workers + reconciliation scheduler (no HTTP)
 packages/
   database/   Prisma 7 schema, migrations, seed, generated client boundary
   payment-core/    Provider-neutral contract, states, and errors
@@ -263,6 +280,7 @@ docs/
   refund-design.md   Refund locking, idempotency, and administration contract
   failure-lab-report.md  Stage 6 fault-injection scenarios and evidence
   provider-adapter.md    Shared Stripe/PayPal contract and mapping
+  reconciliation.md     Outbox, ledger, reconciliation, and operations contract
   webhook-design.md  Raw-body verification, queue, retry, and worker contract
 infra/
   docker/     Container notes

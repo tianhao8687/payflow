@@ -143,22 +143,18 @@ export class PayPalProvider implements PaymentProvider {
   async getPayment(providerPaymentId: string): Promise<ProviderPayment> {
     this.assertConfigured(PaymentProviderCapability.PAYMENT, 'GET_PAYMENT');
     const response = await this.request<Record<string, unknown>>(
-      `/v2/checkout/orders/${encodeURIComponent(providerPaymentId)}`,
+      `/v2/payments/captures/${encodeURIComponent(providerPaymentId)}`,
       { method: 'GET', mutation: false, operation: 'GET_PAYMENT' },
     );
-    const capture = readCapture(response.body);
-    const amount = capture
-      ? readMoney(capture.amount)
-      : readOrderAmount(response.body);
-    const status =
-      readString(capture?.status) ?? readString(response.body.status);
+    const amount = readMoney(response.body.amount);
+    const status = readString(response.body.status);
 
     if (!amount || !status) {
       throw new PaymentProviderError(
         this.name,
         'GET_PAYMENT',
-        'PAYPAL_ORDER_INCOMPLETE',
-        'PayPal returned an incomplete payment order.',
+        'PAYPAL_CAPTURE_INCOMPLETE',
+        'PayPal returned an incomplete payment capture.',
         response.requestId,
       );
     }
@@ -166,8 +162,9 @@ export class PayPalProvider implements PaymentProvider {
     return {
       amount: amount.amount,
       currency: amount.currency,
-      providerPaymentId: readString(capture?.id) ?? providerPaymentId,
+      providerPaymentId: readString(response.body.id) ?? providerPaymentId,
       providerRequestId: response.requestId,
+      refundedAmount: null,
       status: mapPaymentStatus(status),
     };
   }
@@ -208,6 +205,7 @@ export class PayPalProvider implements PaymentProvider {
       currency: amount.currency,
       providerPaymentId: captureId,
       providerRequestId: response.requestId,
+      refundedAmount: 0,
       status: mapPaymentStatus(status),
     };
   }
@@ -579,6 +577,8 @@ function readMoney(
 function mapPaymentStatus(status: string): ProviderPaymentStatus {
   switch (status) {
     case 'COMPLETED':
+    case 'PARTIALLY_REFUNDED':
+    case 'REFUNDED':
       return ProviderPaymentStatus.SUCCEEDED;
     case 'APPROVED':
     case 'PENDING':

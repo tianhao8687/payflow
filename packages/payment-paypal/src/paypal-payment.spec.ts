@@ -7,6 +7,39 @@ import {
 import { PayPalProvider } from './paypal.provider';
 
 describe('PayPalProvider payments and refunds', () => {
+  it('reconciles the persisted PayPal capture rather than the checkout order', async () => {
+    const requests: Array<{ init?: RequestInit; url: string }> = [];
+    const provider = providerWithResponses(
+      [
+        json({ access_token: 'sandbox-token', expires_in: 3_600 }),
+        json(
+          {
+            amount: { currency_code: 'USD', value: '39.98' },
+            id: '3C679366HH908993F',
+            status: 'PARTIALLY_REFUNDED',
+          },
+          200,
+          { 'paypal-debug-id': 'debug-lookup' },
+        ),
+      ],
+      requests,
+    );
+
+    await expect(
+      provider.getPayment('3C679366HH908993F'),
+    ).resolves.toMatchObject({
+      amount: 3_998,
+      currency: 'USD',
+      providerPaymentId: '3C679366HH908993F',
+      providerRequestId: 'debug-lookup',
+      refundedAmount: null,
+      status: ProviderPaymentStatus.SUCCEEDED,
+    });
+    expect(requests[1]?.url).toBe(
+      'https://api-m.sandbox.paypal.com/v2/payments/captures/3C679366HH908993F',
+    );
+  });
+
   it('creates, captures, and refunds through the unified provider contract', async () => {
     const requests: Array<{ init?: RequestInit; url: string }> = [];
     const responses = [

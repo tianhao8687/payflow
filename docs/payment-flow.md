@@ -1,6 +1,6 @@
 # PayFlow payment flow
 
-## Authoritative path through Stage 8
+## Authoritative path through Stage 9
 
 ```mermaid
 sequenceDiagram
@@ -38,11 +38,27 @@ sequenceDiagram
     R->>P: Capture approved PayPal Order
     P-->>R: Normalized capture result
   end
-  W->>DB: Validate and atomically project Payment/Refund + Order
+  W->>DB: Validate and atomically project Payment/Refund + Order + OutboxEvent
+  loop Outbox publisher
+    W->>DB: Poll durable PENDING money events
+    W->>Q: Enqueue OutboxEvent UUID
+    W->>DB: Record published_at and queue job ID
+  end
+  Q->>W: Deliver outbox job (at least once)
+  W->>DB: Post balanced debit/credit pair + mark event processed
+  loop Scheduled reconciliation
+    W->>DB: Select bounded local payment window
+    W->>R: getPayment(persisted provider ID)
+    R->>P: Read provider payment/capture
+    P-->>R: Amount, currency, status, available refund total
+    W->>DB: Persist check, snapshots, and any open issue
+  end
   U->>API: GET /payments/:id or GET /orders/:id
   API-->>U: Authoritative PostgreSQL status
-  A->>API: GET /admin/queues/webhooks
-  API-->>A: Queue counts, states, errors, and attempt totals
+  A->>API: GET /admin/integrity
+  API-->>A: Outbox, balanced ledger, runs, and differences
+  A->>API: PATCH /admin/reconciliation/issues/:id/resolve
+  API->>DB: Resolve once + append ADMIN audit
 ```
 
 The browser never submits a price. A provider redirect is not proof of payment,
@@ -65,6 +81,10 @@ validated PostgreSQL projection.
    delivery converges on one retained job.
 7. PayPal capture: `payment:capture:{paymentId}` makes an approved-order capture
    safe to retry after an unknown transport outcome.
+8. Financial outbox: payment/refund success uses a stable event key and appends
+   inside the same state transaction.
+9. Outbox queue: the OutboxEvent UUID is the BullMQ job ID; the same UUID is
+   unique on `ledger_transactions`, so at-least-once delivery posts once.
 
 Concurrent cancellation, payment creation, refund reservation, and webhook
 projection share the order-scoped PostgreSQL advisory-lock boundary. Event
@@ -82,6 +102,23 @@ defense.
   `UnrecoverableError` and stop after the first attempt.
 - Completed jobs remain observable for one day (up to 1,000); failed jobs remain
   for seven days (up to 2,000).
+- Outbox jobs use the same five-attempt exponential policy, retain completed and
+  failed jobs with bounded counts, and persist publish/processing attempts plus
+  safe terminal errors in PostgreSQL.
+
+## Ledger and reconciliation invariants
+
+- Payment success debits provider receivable and credits customer payment
+  clearing; refund success reverses those directions.
+- Every amount is an integer minor unit. A deferred PostgreSQL constraint
+  trigger requires at least two entries, identical transaction/account/entry
+  currency, and a zero debit-minus-credit sum at commit.
+- Scheduled reconciliation compares local/provider amount, currency, normalized
+  status, and cumulative refund total when the provider lookup supplies it.
+  Stripe expands `latest_charge` for `amount_refunded`; PayPal's capture lookup
+  reports the cumulative refund value as unavailable rather than inventing it.
+- Checks retain both snapshots. Concurrent mismatches converge on one open issue
+  per payment/type; only ADMIN may resolve it, and resolution is audited once.
 
 ## Supported Stripe events
 
