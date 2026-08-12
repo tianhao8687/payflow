@@ -4,28 +4,30 @@ PayFlow is a full-stack payment-system portfolio project implemented one
 acceptance-gated stage at a time from the accompanying Codex implementation
 specification.
 
-> Current delivery: **Stage 1 — Auth + Product (accepted)**. Orders, payment
-> collection, webhooks, refunds, and the Stage 5 admin business console remain
-> intentionally unimplemented.
+> Current delivery: **Stage 2 — Order (accepted)**. Payment collection,
+> webhooks, refunds, and the Stage 5 admin business console remain intentionally
+> unimplemented.
 
-## Stage 1 architecture
+## Stage 2 architecture
 
 ```mermaid
 flowchart LR
   Browser[Next.js web :3000] -->|public reads| Products[NestJS products API]
   Browser -->|register / login| Auth[NestJS auth API]
+  Browser -->|cart IDs + quantities| Orders[NestJS orders API]
   Browser -->|Bearer JWT| Protected[Protected API boundary]
   Protected --> RBAC{USER or ADMIN}
   Auth --> DB[(PostgreSQL :5432)]
   Products --> DB
+  Orders -->|server price + snapshot transaction| DB
   RBAC --> DB
   Auth --> Docs[OpenAPI /docs]
 ```
 
 The V1 boundary remains a modular monolith. PostgreSQL is the source of truth,
 Prisma owns schema and migrations, passwords use bcrypt cost 12, and the API—not
-the browser—enforces authentication and roles. Product prices are integer minor
-units; floating-point money is forbidden.
+the browser—enforces authentication, roles, ownership, and order totals. Product
+and order amounts are integer minor units; floating-point money is forbidden.
 
 ## Requirements
 
@@ -43,7 +45,7 @@ docker compose up --build --wait
 
 Override `JWT_SECRET`, `PAYFLOW_ADMIN_EMAIL`, and `PAYFLOW_ADMIN_PASSWORD` in a
 local `.env` before using a persistent environment. The API applies committed
-migrations and runs the idempotent Stage 1 seed before it starts.
+migrations and runs the idempotent sandbox seed before it starts.
 
 If port 5432 is already occupied, keep the container port unchanged and override
 only the host port:
@@ -64,6 +66,8 @@ Services and interfaces:
 - Web catalog: <http://localhost:3000>
 - Registration: <http://localhost:3000/register>
 - Login: <http://localhost:3000/login>
+- Cart: <http://localhost:3000/cart>
+- Customer orders: <http://localhost:3000/orders>
 - API information: <http://localhost:4000>
 - API health: <http://localhost:4000/health>
 - OpenAPI UI: <http://localhost:4000/docs>
@@ -75,19 +79,25 @@ Stop services without deleting database data:
 docker compose down
 ```
 
-## Stage 1 API
+## Stage 2 API
 
-| Method | Path             | Access | Purpose                           |
-| ------ | ---------------- | ------ | --------------------------------- |
-| POST   | `/auth/register` | Public | Create a USER and issue a JWT     |
-| POST   | `/auth/login`    | Public | Verify credentials and issue JWT  |
-| GET    | `/auth/me`       | JWT    | Return the safe current-user DTO  |
-| GET    | `/products`      | Public | List active products              |
-| GET    | `/products/:id`  | Public | Read one active product           |
-| GET    | `/admin/profile` | ADMIN  | Verify the administrator boundary |
+| Method | Path                 | Access | Purpose                           |
+| ------ | -------------------- | ------ | --------------------------------- |
+| POST   | `/auth/register`     | Public | Create a USER and issue a JWT     |
+| POST   | `/auth/login`        | Public | Verify credentials and issue JWT  |
+| GET    | `/auth/me`           | JWT    | Return the safe current-user DTO  |
+| GET    | `/products`          | Public | List active products              |
+| GET    | `/products/:id`      | Public | Read one active product           |
+| GET    | `/admin/profile`     | ADMIN  | Verify the administrator boundary |
+| POST   | `/orders`            | JWT    | Create a server-priced order      |
+| GET    | `/orders`            | JWT    | List current user's orders        |
+| GET    | `/orders/:id`        | JWT    | Read an owned order and snapshots |
+| POST   | `/orders/:id/cancel` | JWT    | Cancel an owned pending order     |
 
-Public registration cannot choose a role. The `/admin/profile` route is a Stage
-1 RBAC verifier, not the Stage 5 admin business console.
+Public registration cannot choose a role. Order creation accepts only product
+IDs and quantities; any client price field is rejected, and accepted totals are
+calculated from current database products. The `/admin/profile` route remains
+an RBAC verifier, not the Stage 5 admin business console.
 
 ## Local development
 
@@ -114,7 +124,7 @@ Run static checks, unit tests, and production builds:
 pnpm run ci
 ```
 
-Run the database-backed Stage 1 acceptance suite after migration and seed:
+Run the database-backed Stage 2 acceptance suite after migration and seed:
 
 ```powershell
 pnpm db:migrate:deploy
@@ -123,7 +133,7 @@ pnpm test:e2e
 ```
 
 The GitHub Actions workflow starts PostgreSQL 18 and performs both groups. Full
-evidence is recorded in [`docs/stages/stage-1.md`](docs/stages/stage-1.md).
+evidence is recorded in [`docs/stages/stage-2.md`](docs/stages/stage-2.md).
 
 ## Workspace layout
 

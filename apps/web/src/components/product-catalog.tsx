@@ -10,6 +10,8 @@ import {
   type ProductListResponse,
 } from '@/lib/api';
 
+import { AddToCartButton } from './add-to-cart-button';
+
 type CatalogState =
   | { status: 'loading' }
   | { data: ProductListResponse; status: 'ready' }
@@ -150,7 +152,7 @@ function ProductCard({ index, product }: { index: number; product: Product }) {
             {product.name}
           </Link>
         </h3>
-        <div className="relative mt-auto flex items-end justify-between gap-4 pt-8">
+        <div className="relative z-10 mt-auto flex flex-wrap items-end justify-between gap-4 pt-8">
           <div>
             <p className="text-lg font-bold tabular-nums">
               {formatMoney(product.priceAmount, product.currency)}
@@ -159,12 +161,10 @@ function ProductCard({ index, product }: { index: number; product: Product }) {
               {product.stock} in sandbox stock
             </p>
           </div>
-          <span
-            className="text-2xl text-[#0757ff] transition-transform group-hover:translate-x-1"
-            aria-hidden="true"
-          >
-            →
-          </span>
+          <AddToCartButton
+            className="min-h-10 rounded-md bg-[#0757ff] px-3.5 text-sm font-semibold text-white hover:bg-[#0648d6] disabled:cursor-not-allowed disabled:bg-[#858b95] focus-visible:outline-3 focus-visible:outline-offset-3 focus-visible:outline-[#0757ff]"
+            product={product}
+          />
         </div>
       </div>
     </article>

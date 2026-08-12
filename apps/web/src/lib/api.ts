@@ -32,6 +32,41 @@ export interface ProductListResponse {
   items: Product[];
 }
 
+export type OrderStatus =
+  | 'PENDING_PAYMENT'
+  | 'PAID'
+  | 'FULFILLED'
+  | 'CANCELLED'
+  | 'PARTIALLY_REFUNDED'
+  | 'REFUNDED';
+
+export interface OrderItem {
+  id: string;
+  productId: string;
+  skuSnapshot: string;
+  nameSnapshot: string;
+  unitPriceAmount: number;
+  quantity: number;
+  lineTotalAmount: number;
+}
+
+export interface Order {
+  id: string;
+  userId: string;
+  orderNo: string;
+  status: OrderStatus;
+  currency: string;
+  subtotalAmount: number;
+  totalAmount: number;
+  createdAt: string;
+  items: OrderItem[];
+}
+
+export interface OrderListResponse {
+  count: number;
+  items: Order[];
+}
+
 interface ApiErrorPayload {
   code?: string;
   details?: unknown;

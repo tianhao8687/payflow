@@ -9,7 +9,7 @@ export default function Home() {
         <div className="mx-auto grid max-w-[1536px] gap-10 px-5 py-14 sm:px-8 sm:py-20 lg:grid-cols-[minmax(0,1fr)_390px] lg:items-end lg:px-16 lg:py-24">
           <div className="max-w-[820px]">
             <p className="font-mono text-xs font-bold tracking-[0.15em] text-[#0757ff] uppercase sm:text-sm">
-              Stage 01 / Auth + Product
+              Stage 02 / Order
             </p>
             <h1 className="mt-5 text-[clamp(2.8rem,7vw,6.6rem)] leading-[0.88] font-bold tracking-[-0.075em]">
               Tools for reliable payment work.
@@ -17,14 +17,14 @@ export default function Home() {
           </div>
           <div className="border-l-4 border-[#0757ff] pl-5 sm:pl-6">
             <p className="text-base leading-7 text-[#555b66] sm:text-lg">
-              A read-only sandbox catalog for the people who design, test and
-              operate money movement.
+              Build a cart, then let the API calculate an immutable order from
+              current product records.
             </p>
             <Link
               className="mt-5 inline-flex min-h-11 items-center font-semibold text-[#0757ff] underline decoration-2 underline-offset-4 hover:text-[#003fc7] focus-visible:rounded-sm focus-visible:outline-3 focus-visible:outline-offset-3 focus-visible:outline-[#0757ff]"
-              href="/register"
+              href="/cart"
             >
-              Create a Stage 1 account <span aria-hidden="true">→</span>
+              Review your cart <span aria-hidden="true">→</span>
             </Link>
           </div>
         </div>
@@ -47,8 +47,8 @@ export default function Home() {
             </h2>
           </div>
           <p className="max-w-[420px] text-sm leading-6 text-[#555b66] sm:text-right">
-            Prices come from integer minor units in PostgreSQL. Checkout is
-            intentionally outside Stage 1.
+            Displayed prices are previews. Every accepted order is recalculated
+            from integer minor units in PostgreSQL.
           </p>
         </div>
 

@@ -5,6 +5,8 @@ import { useEffect, useState } from 'react';
 
 import { ApiError, apiRequest, formatMoney, type Product } from '@/lib/api';
 
+import { AddToCartButton } from './add-to-cart-button';
+
 type DetailState =
   | { status: 'loading' }
   | { product: Product; status: 'ready' }
@@ -144,18 +146,24 @@ export function ProductDetail({ id }: { id: string }) {
 
           <div className="mt-auto pt-10">
             <div className="border-l-4 border-[#08ae8c] bg-[#edf9f6] p-4">
-              <p className="font-semibold">Stage 1 read-only catalog</p>
+              <p className="font-semibold">Server-authoritative checkout</p>
               <p className="mt-1 text-sm leading-6 text-[#43635c]">
-                Cart and checkout begin in later approved stages. No purchase is
-                created from this page.
+                This displayed price is only a preview. Order totals are loaded
+                again from PostgreSQL and calculated by the API.
               </p>
             </div>
-            <Link
-              className="mt-4 inline-flex min-h-12 w-full items-center justify-center rounded-md bg-[#0757ff] px-6 font-semibold text-white shadow-[0_4px_0_#003db9] hover:-translate-y-0.5 hover:bg-[#064ce0] hover:shadow-[0_6px_0_#003db9] focus-visible:outline-3 focus-visible:outline-offset-4 focus-visible:outline-[#0757ff]"
-              href="/register"
-            >
-              Create a sandbox account
-            </Link>
+            <div className="mt-4 grid gap-3 sm:grid-cols-2">
+              <AddToCartButton
+                className="inline-flex min-h-12 w-full items-center justify-center rounded-md bg-[#0757ff] px-6 font-semibold text-white shadow-[0_4px_0_#003db9] hover:-translate-y-0.5 hover:bg-[#064ce0] hover:shadow-[0_6px_0_#003db9] disabled:cursor-not-allowed disabled:bg-[#858b95] disabled:shadow-none focus-visible:outline-3 focus-visible:outline-offset-4 focus-visible:outline-[#0757ff]"
+                product={product}
+              />
+              <Link
+                className="inline-flex min-h-12 items-center justify-center rounded-md border border-[#aeb4bf] px-6 font-semibold hover:border-[#080a0f] hover:bg-[#f5f7fa] focus-visible:outline-3 focus-visible:outline-offset-4 focus-visible:outline-[#0757ff]"
+                href="/cart"
+              >
+                Review cart
+              </Link>
+            </div>
           </div>
         </div>
       </div>

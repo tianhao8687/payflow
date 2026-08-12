@@ -13,12 +13,22 @@ enum Role {
   ADMIN
 }
 
+enum OrderStatus {
+  PENDING_PAYMENT
+  PAID
+  FULFILLED
+  CANCELLED
+  PARTIALLY_REFUNDED
+  REFUNDED
+}
+
 model User {
   id           String   @id @default(uuid()) @db.Uuid
   email        String   @unique @db.VarChar(320)
   passwordHash String   @map("password_hash") @db.VarChar(100)
   role         Role     @default(USER)
   createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  orders       Order[]
 
   @@map("users")
 }
@@ -31,7 +41,42 @@ model Product {
   currency    String  @db.Char(3)
   stock       Int
   active      Boolean @default(true)
+  orderItems  OrderItem[]
 
   @@index([active])
   @@map("products")
+}
+
+model Order {
+  id             String      @id @default(uuid()) @db.Uuid
+  userId         String      @map("user_id") @db.Uuid
+  orderNo        String      @unique @map("order_no") @db.VarChar(32)
+  status         OrderStatus @default(PENDING_PAYMENT)
+  currency       String      @db.Char(3)
+  subtotalAmount Int         @map("subtotal_amount")
+  totalAmount    Int         @map("total_amount")
+  createdAt      DateTime    @default(now()) @map("created_at") @db.Timestamptz(3)
+  user           User        @relation(fields: [userId], references: [id], onDelete: Restrict)
+  items          OrderItem[]
+
+  @@index([userId, createdAt])
+  @@index([status])
+  @@map("orders")
+}
+
+model OrderItem {
+  id              String  @id @default(uuid()) @db.Uuid
+  orderId         String  @map("order_id") @db.Uuid
+  productId       String  @map("product_id") @db.Uuid
+  skuSnapshot     String  @map("sku_snapshot") @db.VarChar(64)
+  nameSnapshot    String  @map("name_snapshot") @db.VarChar(160)
+  unitPriceAmount Int     @map("unit_price_amount")
+  quantity        Int
+  lineTotalAmount Int     @map("line_total_amount")
+  order           Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product         Product @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  @@index([orderId])
+  @@index([productId])
+  @@map("order_items")
 }

@@ -2,8 +2,18 @@ import { PrismaPg } from '@prisma/adapter-pg';
 
 import { PrismaClient } from './generated/prisma/client';
 
-export { Prisma, PrismaClient, Role } from './generated/prisma/client';
-export type { Product, User } from './generated/prisma/client';
+export {
+  OrderStatus,
+  Prisma,
+  PrismaClient,
+  Role,
+} from './generated/prisma/client';
+export type {
+  Order,
+  OrderItem,
+  Product,
+  User,
+} from './generated/prisma/client';
 
 export function createPrismaClient(databaseUrl: string): PrismaClient {
   if (!databaseUrl) {

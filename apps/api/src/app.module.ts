@@ -12,6 +12,7 @@ import { validateEnvironment } from './config/environment';
 import { DatabaseModule } from './database/database.module';
 import { HealthModule } from './health/health.module';
 import { RequestIdMiddleware } from './http/request-id.middleware';
+import { OrdersModule } from './orders/orders.module';
 import { ProductsModule } from './products/products.module';
 
 @Module({
@@ -26,6 +27,7 @@ import { ProductsModule } from './products/products.module';
     AuthModule,
     HealthModule,
     ProductsModule,
+    OrdersModule,
   ],
   controllers: [AppController],
   providers: [

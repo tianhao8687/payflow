@@ -2,7 +2,7 @@
 
 Date: 2026-08-12  
 Status: Accepted  
-Next stage: Not started
+Next stage: Stage 2 accepted
 
 ## 1. Stage objective
 
@@ -204,7 +204,7 @@ Chromium. The clean desktop and mobile captures are stored in `docs/design`.
 - JWT role changes take effect on renewal or expiration; the 15-minute lifetime
   bounds the Stage 1 window. Revocation infrastructure is deferred unless a
   later approved stage requires it.
-- Stage 2 order behavior is intentionally absent.
+- Stage 2 order behavior is recorded separately in `stage-2.md`.
 
 ## 9. Acceptance checklist
 
@@ -223,4 +223,4 @@ Chromium. The clean desktop and mobile captures are stored in `docs/design`.
 ## 10. Phase gate
 
 Stage 1 passed every acceptance criterion in the implementation specification.
-Stage 2 has not been started.
+Stage 2 is accepted; see `docs/stages/stage-2.md`.
