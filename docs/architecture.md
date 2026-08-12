@@ -1,10 +1,10 @@
 # PayFlow architecture
 
-## Current boundary: Stage 5 accepted
+## Current boundary: Stage 6 implementation complete
 
-Stage 5 adds serialized, idempotent refunds and an audited operations console to
-the signed webhook/payment authority from Stage 4. The V1 modular-monolith
-boundary and core domain model remain unchanged.
+Stage 6 adds a deterministic, database-backed Failure Lab around the payment,
+webhook, refund, transaction, and RBAC boundaries delivered through Stage 5.
+The V1 modular-monolith boundary and core domain model remain unchanged.
 
 ```mermaid
 flowchart TB
@@ -168,6 +168,26 @@ flowchart TB
 - The Next.js operations console renders dashboard, order/payment detail,
   provider attempts, full/partial refund submission, webhook delivery counts
   and errors, and audit metadata. Browser visibility never replaces API RBAC.
+
+## Stage 6 verification boundary
+
+- The dedicated Failure Lab drives the real NestJS HTTP surface and PostgreSQL
+  repositories while substituting deterministic Stripe sandbox gateways. This
+  keeps provider outcomes reproducible without weakening application locks,
+  transactions, validation, raw-body signature checks, or authorization.
+- Five concurrent payment requests must converge on one Payment and one stable
+  provider idempotency key. A provider timeout after acceptance is retried with
+  that same key and records both attempts.
+- Duplicate and out-of-order signed events exercise the durable webhook inbox
+  and terminal-state protections. A simulated process termination proves that
+  provider retry restores consistency.
+- A temporary database constraint injects failure between the Payment and Order
+  writes. The webhook transaction must roll back both writes and its inbox row
+  before a clean replay succeeds.
+- Duplicate and concurrent refund requests prove business-key idempotency and
+  the cumulative refund ceiling. A USER request proves the API-side 403 boundary.
+- The ten scenarios run in GitHub Actions after migrations and seed, and remain
+  independently reproducible with `pnpm test:failure-lab`.
 
 ## Data boundary
 

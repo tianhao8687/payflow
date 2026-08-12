@@ -154,7 +154,7 @@ class FakeStripeRefundGateway {
   }
 }
 
-describe('PayFlow Stage 5 (e2e)', () => {
+describe('PayFlow API acceptance through Stage 6 (e2e)', () => {
   let app: INestApplication<App>;
   let database: DatabaseService;
   const userEmail = `stage-1-${Date.now()}@example.com`;
@@ -204,7 +204,7 @@ describe('PayFlow Stage 5 (e2e)', () => {
   it('exposes system and seeded product reads without authentication', async () => {
     await request(app.getHttpServer()).get('/').expect(200).expect({
       service: 'PayFlow API',
-      stage: 5,
+      stage: 6,
       health: '/health',
       docs: '/docs',
     });

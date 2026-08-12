@@ -15,10 +15,10 @@ describe('AppController', () => {
   });
 
   describe('root', () => {
-    it('describes the Stage 5 API surface', () => {
+    it('describes the Stage 6 API surface', () => {
       expect(appController.getInfo()).toEqual({
         service: 'PayFlow API',
-        stage: 5,
+        stage: 6,
         health: '/health',
         docs: '/docs',
       });

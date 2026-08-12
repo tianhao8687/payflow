@@ -23,6 +23,7 @@
     "lint": "pnpm -r --if-present lint",
     "test": "pnpm -r --if-present test",
     "test:e2e": "pnpm --filter @payflow/api test:e2e",
+    "test:failure-lab": "pnpm --filter @payflow/api test:failure-lab",
     "typecheck": "pnpm db:generate && pnpm -r --if-present typecheck"
   },
   "devDependencies": {

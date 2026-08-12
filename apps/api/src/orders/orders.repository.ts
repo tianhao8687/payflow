@@ -137,7 +137,7 @@ export class OrdersRepository {
               include: includeItems,
             });
           },
-          { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+          { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted },
         );
       } catch (error: unknown) {
         if (

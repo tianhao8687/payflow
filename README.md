@@ -4,10 +4,10 @@ PayFlow is a full-stack payment-system portfolio project implemented one
 acceptance-gated stage at a time from the accompanying Codex implementation
 specification.
 
-> Current delivery: **Stage 5 — Refund and administration (accepted)**.
-> Serialized Stripe Test refunds, end-to-end idempotency, signed refund
-> lifecycle, audit records, and the operations console have passed local,
-> external sandbox, browser, and remote CI gates.
+> Current delivery: **Stage 6 — E2E and Failure Lab (local gate passed)**.
+> Ten deterministic failure scenarios now protect payment and refund
+> idempotency, webhook replay, transaction atomicity, and API authorization.
+> Remote acceptance remains gated on the committed GitHub Actions run.
 
 ## Current architecture
 
@@ -31,6 +31,9 @@ flowchart LR
   Refunds -->|Refund + AuditLog| DB
   RBAC --> DB
   Auth --> Docs[OpenAPI /docs]
+  FailureLab[Stage 6 Failure Lab] -->|real HTTP boundary| Payments
+  FailureLab -->|signed Event replay| Webhooks
+  FailureLab -->|fault injection + assertions| DB
 ```
 
 The V1 boundary remains a modular monolith. PostgreSQL is the source of truth,
@@ -171,8 +174,27 @@ pnpm db:seed
 pnpm test:e2e
 ```
 
-The GitHub Actions workflow starts PostgreSQL 18 and performs both groups. Full
-evidence is recorded in [`docs/stages/stage-5.md`](docs/stages/stage-5.md).
+Run only the ten Stage 6 failure scenarios:
+
+```powershell
+pnpm db:migrate:deploy
+pnpm db:seed
+pnpm test:failure-lab
+```
+
+The Failure Lab uses the real NestJS HTTP application, exact raw webhook body,
+Stripe signature verification, Prisma repositories, and PostgreSQL transactions.
+Deterministic test gateways replace only outbound Stripe network calls, so
+timeouts and concurrency can be repeated without creating external charges or
+refunds. Expected 502/500 log entries are deliberate injections in the timeout,
+restart, and transaction-rollback scenarios; a passing Jest result confirms
+recovery and invariants.
+
+The GitHub Actions workflow starts PostgreSQL 18, applies every migration,
+seeds the sandbox, and runs the regular API E2E suite plus all ten failure
+scenarios. Evidence and scenario details are recorded in
+[`docs/stages/stage-6.md`](docs/stages/stage-6.md) and
+[`docs/failure-lab-report.md`](docs/failure-lab-report.md).
 
 ## Workspace layout
 
@@ -187,6 +209,7 @@ docs/
   adr/        Architecture decision records
   design/     Stage-scoped visual specifications and QA captures
   refund-design.md   Refund locking, idempotency, and administration contract
+  failure-lab-report.md  Stage 6 fault-injection scenarios and evidence
   webhook-design.md  Raw-body, deduplication, and transaction contract
 infra/
   docker/     Container notes

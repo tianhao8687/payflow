@@ -98,7 +98,7 @@ export class PaymentsRepository {
 
             return { created: true, order, payment };
           },
-          { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+          { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted },
         );
       } catch (error: unknown) {
         if (

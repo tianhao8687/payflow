@@ -21,6 +21,7 @@
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
     "pretest:e2e": "pnpm --filter @payflow/shared build && pnpm --filter @payflow/database build",
     "test:e2e": "jest --config ./test/jest-e2e.json --runInBand",
+    "test:failure-lab": "jest --config ./test/jest-e2e.json --runInBand --runTestsByPath ./test/failure-lab.e2e-spec.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

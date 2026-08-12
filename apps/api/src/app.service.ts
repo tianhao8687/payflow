@@ -7,7 +7,7 @@ export class AppService {
   getInfo(): AppInfoResponseDto {
     return {
       service: 'PayFlow API',
-      stage: 5,
+      stage: 6,
       health: '/health',
       docs: '/docs',
     };

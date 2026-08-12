@@ -23,7 +23,7 @@ const readinessItems = [
   },
   {
     title: 'Delivery',
-    detail: 'PostgreSQL locks + CI gates',
+    detail: '10 failure scenarios + CI gates',
     icon: ContainerIcon,
   },
 ] as const;

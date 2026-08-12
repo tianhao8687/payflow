@@ -1,6 +1,6 @@
 # PayFlow payment flow
 
-## Authoritative path through Stage 5
+## Authoritative path through Stage 6
 
 ```mermaid
 sequenceDiagram
@@ -58,7 +58,7 @@ balance checks count `PENDING + SUCCEEDED` rows under that lock. Duplicate
 webhook deliveries also take an event-scoped advisory lock and are ultimately
 protected by the database unique constraint.
 
-## Supported events through Stage 5
+## Supported events through Stage 6
 
 | Stripe Event                               | Local decision                                    |
 | ------------------------------------------ | ------------------------------------------------- |
