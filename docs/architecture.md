@@ -1,6 +1,6 @@
 # PayFlow architecture
 
-## Current boundary: Stage 6 implementation complete
+## Current boundary: Stage 6 accepted
 
 Stage 6 adds a deterministic, database-backed Failure Lab around the payment,
 webhook, refund, transaction, and RBAC boundaries delivered through Stage 5.

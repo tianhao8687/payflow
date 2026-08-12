@@ -2,9 +2,9 @@
 
 Date: 2026-08-13
 
-Status: Local gate passed; remote CI pending
+Status: Accepted
 
-Next stage: Blocked until Stage 6 is accepted
+Next stage: Stage 7 may begin
 
 ## 1. Stage objective
 
@@ -96,11 +96,8 @@ API unit tests                         PASS (16 suites, 62 tests)
 combined database-backed API E2E       PASS (2 suites, 21 tests)
 dedicated Failure Lab                  PASS (10 tests; 3 repeat runs also pass)
 Next.js + NestJS production builds     PASS
-remote GitHub Actions                  PENDING
+remote GitHub Actions                  PASS (run 31621486654, 1m44s)
 ```
-
-GitHub Actions must pass the committed implementation before this record is
-accepted.
 
 ## 8. Acceptance checklist
 
@@ -110,7 +107,7 @@ accepted.
 - [x] README documents exact reproduction commands and expected injected errors.
 - [x] The CI workflow includes the complete database-backed E2E command.
 - [x] Full local static, unit, E2E, and production-build gates pass.
-- [ ] GitHub Actions passes the committed Stage 6 implementation.
+- [x] GitHub Actions passes the committed Stage 6 implementation.
 
 ## 9. Evidence integrity
 
@@ -121,5 +118,5 @@ files or test output.
 
 ## 10. Phase gate
 
-Stage 6 is not yet accepted. Stage 7 must not begin until the remaining local
-and remote checklist items pass and this record is updated with the CI run.
+Stage 6 passed every acceptance criterion in the implementation specification.
+Stage 7 may now begin.

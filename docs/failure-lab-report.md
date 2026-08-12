@@ -2,7 +2,7 @@
 
 Date: 2026-08-13
 
-Status: Local gate passed; committed CI evidence pending
+Status: Accepted
 
 ## Purpose
 
@@ -98,5 +98,6 @@ Time:         5.46 s
 Result:       PASS
 ```
 
-Remote GitHub Actions run evidence will be added to the Stage 6 acceptance
-record after the committed implementation passes.
+The committed implementation passed GitHub Actions run `31621486654` in 1m44s,
+including PostgreSQL migration/seed, the combined E2E suite, and production
+builds.

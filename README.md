@@ -4,10 +4,11 @@ PayFlow is a full-stack payment-system portfolio project implemented one
 acceptance-gated stage at a time from the accompanying Codex implementation
 specification.
 
-> Current delivery: **Stage 6 — E2E and Failure Lab (local gate passed)**.
+> Current delivery: **Stage 6 — E2E and Failure Lab (accepted)**.
 > Ten deterministic failure scenarios now protect payment and refund
 > idempotency, webhook replay, transaction atomicity, and API authorization.
-> Remote acceptance remains gated on the committed GitHub Actions run.
+> Local, database-backed, repeatability, production-build, and remote CI gates
+> have passed.
 
 ## Current architecture
 
