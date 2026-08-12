@@ -4,10 +4,10 @@ PayFlow is a full-stack payment-system portfolio project implemented one
 acceptance-gated stage at a time from the accompanying Codex implementation
 specification.
 
-> Current delivery: **Stage 5 — Refund and administration (local gates
-> passed)**. Serialized Stripe Test refunds, end-to-end idempotency, signed
-> refund lifecycle, audit records, and the operations console are implemented;
-> the remote CI phase gate is recorded in the Stage 5 acceptance file.
+> Current delivery: **Stage 5 — Refund and administration (accepted)**.
+> Serialized Stripe Test refunds, end-to-end idempotency, signed refund
+> lifecycle, audit records, and the operations console have passed local,
+> external sandbox, browser, and remote CI gates.
 
 ## Current architecture
 

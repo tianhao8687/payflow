@@ -2,9 +2,9 @@
 
 Date: 2026-08-13
 
-Status: Implemented; remote CI pending
+Status: Accepted
 
-Next stage: Stage 6 blocked by this phase gate
+Next stage: Stage 6 may begin
 
 ## 1. Stage objective
 
@@ -77,7 +77,7 @@ database-backed API E2E               PASS (1 suite, 11 tests)
 Next.js lint + typecheck + build      PASS
 browser admin workflows              PASS (320/1440, no errors/overflow)
 real Stripe Test checkout + refund   PASS
-remote GitHub Actions                PENDING
+remote GitHub Actions                PASS (run 31620034185, 1m52s)
 ```
 
 The external sandbox check completed a real hosted Checkout, projected its
@@ -98,8 +98,9 @@ Payment/Order in `REFUNDED`.
 - [x] Admin lists are paginated and indexed.
 - [x] Ordinary USER receives 403 for administration routes.
 - [x] Local static, unit, E2E, production, and browser gates pass.
-- [ ] GitHub Actions passes the committed Stage 5 implementation.
+- [x] GitHub Actions passes the committed Stage 5 implementation.
 
 ## 7. Phase gate
 
-Stage 6 must not begin until the remaining remote CI checkbox is accepted.
+Stage 5 passed every acceptance criterion in the implementation specification.
+Stage 6 may now begin.

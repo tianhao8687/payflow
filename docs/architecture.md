@@ -1,6 +1,6 @@
 # PayFlow architecture
 
-## Current boundary: Stage 5 implemented
+## Current boundary: Stage 5 accepted
 
 Stage 5 adds serialized, idempotent refunds and an audited operations console to
 the signed webhook/payment authority from Stage 4. The V1 modular-monolith
