@@ -76,7 +76,7 @@ jobs:
       - name: Apply database migrations and seed
         run: pnpm db:migrate:deploy && pnpm db:seed
 
-      - name: Stage 3 API end-to-end test
+      - name: Stage 4 API end-to-end test
         run: pnpm test:e2e
 
       - name: Build

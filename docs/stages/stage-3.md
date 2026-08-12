@@ -4,7 +4,7 @@ Date: 2026-08-12
 
 Status: Accepted
 
-Next stage: Stage 4 not started
+Next stage: Stage 4 accepted on 2026-08-13
 
 ## 1. Stage objective
 

@@ -2,9 +2,9 @@
 
 Date: 2026-08-13
 
-Status: Local acceptance passed; remote CI pending
+Status: Accepted
 
-Next stage: Blocked until every Stage 4 gate below passes
+Next stage: Stage 5 not started
 
 ## 1. Stage objective
 
@@ -94,7 +94,7 @@ pnpm test                        PASS (13 suites, 48 tests)
 pnpm build                       PASS (web, API, database, shared)
 production HTTP/OpenAPI          PASS (Stage 4 route and version)
 browser responsive checks       PASS (320/768/1440, no errors/overflow)
-GitHub Actions                   PENDING final gate
+GitHub Actions                   PASS (run 31616625143, 1m35s)
 ```
 
 The E2E route is the real NestJS raw-body endpoint backed by PostgreSQL. Stripe's
@@ -120,9 +120,9 @@ and a signed amount mismatch cannot change Payment or Order.
 - [x] Five duplicate deliveries do not reprocess the event.
 - [x] Out-of-order and unknown events cannot regress business state.
 - [x] Final lint, typecheck, unit, E2E, and production build gates pass.
-- [ ] GitHub Actions passes the committed Stage 4 implementation.
+- [x] GitHub Actions passes the committed Stage 4 implementation.
 
 ## 10. Phase gate
 
-Stage 5 must not start until the two remaining final gates are checked and this
-record is changed to `Accepted`.
+Stage 4 passed every acceptance criterion in the implementation specification.
+Stage 5 may now begin.
