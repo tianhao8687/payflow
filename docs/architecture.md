@@ -1,6 +1,6 @@
 # PayFlow architecture
 
-## Current boundary: Stage 9 local acceptance complete
+## Current boundary: Stage 9 accepted
 
 Stage 9 extends the existing Stripe/PayPal worker with a transactional outbox,
 an enforced double-entry ledger, and scheduled reconciliation. It does not

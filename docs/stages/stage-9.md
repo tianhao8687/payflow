@@ -2,10 +2,9 @@
 
 Date: 2026-08-13
 
-Status: Local acceptance passed; GitHub Actions pending
+Status: Accepted
 
-Next stage: Stage 10 remains blocked until the final committed Stage 9 workflow
-passes remotely
+Next stage: Stage 10 may begin
 
 ## 1. Stage objective
 
@@ -53,7 +52,7 @@ Stage 9 PostgreSQL/Redis acceptance              PASS (1 suite, 1 test)
 BullMQ Redis integration                         PASS (1 suite, 1 test)
 full API/Failure Lab/Stage 8/Stage 9 E2E        PASS (4 suites, 23 tests)
 browser QA at 320/768/1024/1440                 PASS (no page overflow/errors)
-GitHub Actions                                   PENDING
+GitHub Actions                                   PASS (run 31634962310, 2m47s)
 ```
 
 The PayPal adapter tests use official-shaped Sandbox responses; no external
@@ -79,10 +78,11 @@ PayPal API compatibility decisions are documented in
       audited exactly once.
 - [x] Responsive ADMIN Integrity UI passed browser validation.
 - [x] Fresh migration/seed and complete local regression gates pass.
-- [ ] Final committed GitHub Actions run passes.
+- [x] Final committed GitHub Actions run passes (`31634962310`).
 
 ## 6. Phase gate
 
-Stage 9 is not yet accepted. Its implementation and local acceptance gates pass,
-but Stage 10 must not begin until GitHub Actions validates the committed Stage 9
-boundary.
+Stage 9 is accepted. Transactional outbox delivery, enforced balanced ledger
+transactions, deliberate mismatch discovery, audited resolution, complete local
+regression gates, and GitHub Actions all pass, so Stage 10 may begin in the
+prescribed sequence.

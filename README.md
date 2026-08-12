@@ -4,12 +4,11 @@ PayFlow is a full-stack payment-system portfolio project implemented one
 acceptance-gated stage at a time from the accompanying Codex implementation
 specification.
 
-> Current delivery: **Stage 9 — Outbox + Ledger + Reconciliation (remote gate
-> pending)**. Successful money-state transitions append a transactional outbox,
-> the worker posts database-enforced balanced ledger pairs, and scheduled
-> provider reconciliation exposes audited differences to ADMIN. All local Stage
-> 9 gates pass; Stage 10 remains blocked until the committed remote workflow
-> passes.
+> Current delivery: **Stage 9 — Outbox + Ledger + Reconciliation (accepted)**.
+> Successful money-state transitions append a transactional outbox, the worker
+> posts database-enforced balanced ledger pairs, and scheduled provider
+> reconciliation exposes audited differences to ADMIN. All local and remote
+> Stage 9 gates pass; Stage 10 may begin.
 
 ## Current architecture
 
