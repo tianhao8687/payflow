@@ -1,0 +1,7 @@
+.next
+.codex-review
+dist
+coverage
+node_modules
+packages/database/src/generated/prisma
+pnpm-lock.yaml

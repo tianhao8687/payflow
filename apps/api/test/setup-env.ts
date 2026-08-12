@@ -1,0 +1,8 @@
+process.env.NODE_ENV ??= 'test';
+process.env.APP_BASE_URL ??= 'http://localhost:3000';
+process.env.DATABASE_URL ??=
+  'postgresql://payflow:payflow@localhost:55432/payflow?schema=public';
+process.env.JWT_SECRET ??= 'payflow-e2e-only-secret-change-me-2026';
+process.env.JWT_EXPIRES_IN_SECONDS ??= '900';
+process.env.PAYFLOW_ADMIN_EMAIL ??= 'admin@payflow.local';
+process.env.PAYFLOW_ADMIN_PASSWORD ??= 'Payflow-Sandbox-Admin-2026!';

@@ -1,0 +1,36 @@
+{
+  "name": "payflow",
+  "version": "0.1.0",
+  "private": true,
+  "description": "PayFlow full-stack payment system monorepo",
+  "packageManager": "pnpm@11.16.0",
+  "engines": {
+    "node": ">=20.9.0",
+    "pnpm": ">=11.0.0"
+  },
+  "scripts": {
+    "build": "pnpm -r --if-present build",
+    "ci": "pnpm lint && pnpm typecheck && pnpm test && pnpm build",
+    "db:generate": "pnpm --filter @payflow/database prisma:generate",
+    "db:migrate": "pnpm --filter @payflow/database prisma:migrate",
+    "db:migrate:deploy": "pnpm --filter @payflow/database prisma:migrate:deploy",
+    "db:seed": "pnpm --filter @payflow/database prisma:seed",
+    "dev": "pnpm db:generate && pnpm --filter @payflow/shared build && pnpm --filter @payflow/database build && pnpm --parallel --filter @payflow/web --filter @payflow/api dev",
+    "dev:api": "pnpm db:generate && pnpm --filter @payflow/shared build && pnpm --filter @payflow/database build && pnpm --filter @payflow/api dev",
+    "dev:web": "pnpm --filter @payflow/web dev",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "lint": "pnpm -r --if-present lint",
+    "test": "pnpm -r --if-present test",
+    "test:e2e": "pnpm --filter @payflow/api test:e2e",
+    "typecheck": "pnpm db:generate && pnpm -r --if-present typecheck"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.0",
+    "eslint": "^9.39.0",
+    "eslint-config-prettier": "^10.1.0",
+    "globals": "^17.0.0",
+    "prettier": "3.9.6",
+    "typescript-eslint": "^8.52.0"
+  }
+}

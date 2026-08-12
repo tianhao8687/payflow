@@ -1,0 +1,22 @@
+# Dependencies and build output
+node_modules/
+.pnpm-store/
+.next/
+dist/
+coverage/
+*.tsbuildinfo
+next-env.d.ts
+packages/database/src/generated/prisma/
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+
+# Runtime output
+*.log
+.DS_Store
+Thumbs.db
+
+# Local review/QA artifacts
+.codex-review/

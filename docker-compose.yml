@@ -1,0 +1,88 @@
+name: payflow
+
+services:
+  postgres:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-payflow}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-payflow}
+      POSTGRES_USER: ${POSTGRES_USER:-payflow}
+    ports:
+      - '${POSTGRES_PORT:-5432}:5432'
+    volumes:
+      - payflow_postgres_data:/var/lib/postgresql
+    healthcheck:
+      test:
+        [
+          'CMD-SHELL',
+          'pg_isready -U ${POSTGRES_USER:-payflow} -d ${POSTGRES_DB:-payflow}',
+        ]
+      interval: 3s
+      timeout: 3s
+      retries: 15
+      start_period: 5s
+    restart: unless-stopped
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    environment:
+      APP_BASE_URL: http://localhost:${WEB_PORT:-3000}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-payflow}:${POSTGRES_PASSWORD:-payflow}@postgres:5432/${POSTGRES_DB:-payflow}?schema=public
+      JWT_EXPIRES_IN_SECONDS: ${JWT_EXPIRES_IN_SECONDS:-900}
+      JWT_SECRET: ${JWT_SECRET:-payflow-sandbox-jwt-secret-change-before-production-2026}
+      NODE_ENV: production
+      PAYFLOW_ADMIN_EMAIL: ${PAYFLOW_ADMIN_EMAIL:-admin@payflow.local}
+      PAYFLOW_ADMIN_PASSWORD: ${PAYFLOW_ADMIN_PASSWORD:-Payflow-Sandbox-Admin-2026!}
+      PORT: 4000
+    ports:
+      - '${API_PORT:-4000}:4000'
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://127.0.0.1:4000/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))",
+        ]
+      interval: 5s
+      timeout: 4s
+      retries: 15
+      start_period: 10s
+    restart: unless-stopped
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      args:
+        NEXT_PUBLIC_API_BASE_URL: http://localhost:${API_PORT:-4000}
+    environment:
+      HOSTNAME: 0.0.0.0
+      NODE_ENV: production
+      PORT: 3000
+    ports:
+      - '${WEB_PORT:-3000}:3000'
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://127.0.0.1:3000').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))",
+        ]
+      interval: 5s
+      timeout: 4s
+      retries: 15
+      start_period: 10s
+    restart: unless-stopped
+
+volumes:
+  payflow_postgres_data:

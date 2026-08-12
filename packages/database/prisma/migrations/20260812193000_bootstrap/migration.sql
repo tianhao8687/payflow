@@ -1,0 +1,2 @@
+-- Stage 0 establishes Prisma migration history without creating domain tables.
+-- User and Product tables are intentionally deferred to Stage 1.
