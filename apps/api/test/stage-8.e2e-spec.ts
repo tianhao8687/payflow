@@ -13,6 +13,7 @@ import {
   type ProviderWebhookAction,
   type VerifyWebhookInput,
 } from '@payflow/payment-core';
+import { PayPalProvider } from '@payflow/payment-paypal';
 import type { WebhookWorker } from '@payflow/payment-queue';
 import request from 'supertest';
 import type { App } from 'supertest/types';
@@ -140,6 +141,123 @@ class StageEightProvider implements PaymentProvider {
   }
 }
 
+interface StoredPayPalOrder {
+  currency: string;
+  orderId: string;
+  paymentId: string;
+  providerOrderId: string;
+  value: string;
+}
+
+class PayPalSandboxFixture {
+  private readonly orders = new Map<string, StoredPayPalOrder>();
+  private captures = 0;
+
+  readonly fetch: typeof fetch = async (input, init) => {
+    await Promise.resolve();
+    const url =
+      typeof input === 'string'
+        ? input
+        : input instanceof URL
+          ? input.toString()
+          : input.url;
+
+    if (url.endsWith('/v1/oauth2/token')) {
+      return this.response({ access_token: 'stage-8-token', expires_in: 3600 });
+    }
+
+    if (url.endsWith('/v2/checkout/orders')) {
+      if (typeof init?.body !== 'string') {
+        return this.response({ name: 'INVALID_REQUEST' }, 400);
+      }
+      const body = JSON.parse(init.body) as {
+        purchase_units: Array<{
+          amount: { currency_code: string; value: string };
+          custom_id: string;
+          invoice_id: string;
+          reference_id: string;
+        }>;
+      };
+      const unit = body.purchase_units[0];
+      if (!unit) {
+        return this.response({ name: 'INVALID_REQUEST' }, 400);
+      }
+      const providerOrderId = `PAYPAL-ORDER-${this.orders.size + 1}`;
+      this.orders.set(providerOrderId, {
+        currency: unit.amount.currency_code,
+        orderId: unit.invoice_id,
+        paymentId: unit.custom_id,
+        providerOrderId,
+        value: unit.amount.value,
+      });
+      return this.response({
+        id: providerOrderId,
+        links: [
+          {
+            href: `https://www.sandbox.paypal.com/checkoutnow?token=${providerOrderId}`,
+            rel: 'payer-action',
+          },
+        ],
+        purchase_units: body.purchase_units,
+        status: 'CREATED',
+      });
+    }
+
+    if (url.endsWith('/v1/notifications/verify-webhook-signature')) {
+      return this.response({ verification_status: 'SUCCESS' });
+    }
+
+    const captureMatch = /\/v2\/checkout\/orders\/([^/]+)\/capture$/.exec(url);
+    if (captureMatch) {
+      this.captures += 1;
+      if (this.captures === 1) {
+        throw new Error('Simulated transient PayPal Sandbox timeout.');
+      }
+      const providerOrderId = decodeURIComponent(captureMatch[1]);
+      const order = this.orders.get(providerOrderId);
+      if (!order) {
+        return this.response({ name: 'RESOURCE_NOT_FOUND' }, 404);
+      }
+      return this.response({
+        id: order.providerOrderId,
+        purchase_units: [
+          {
+            payments: {
+              captures: [
+                {
+                  amount: {
+                    currency_code: order.currency,
+                    value: order.value,
+                  },
+                  id: `paypal-capture-${order.paymentId}`,
+                  status: 'COMPLETED',
+                },
+              ],
+            },
+          },
+        ],
+        status: 'COMPLETED',
+      });
+    }
+
+    return this.response({ name: 'UNSUPPORTED_TEST_ROUTE' }, 500);
+  };
+
+  get captureAttemptCount(): number {
+    return this.captures;
+  }
+
+  private response(body: unknown, status = 200): Response {
+    return new Response(JSON.stringify(body), {
+      headers: {
+        'Content-Type': 'application/json',
+        'PayPal-Debug-Id': `stage-8-debug-${this.captures}`,
+      },
+      status,
+    });
+  }
+}
+
 describe('PayFlow Stage 8 PayPal and BullMQ acceptance (e2e)', () => {
   let app: INestApplication<App>;
   let database: DatabaseService;
@@ -148,7 +266,13 @@ describe('PayFlow Stage 8 PayPal and BullMQ acceptance (e2e)', () => {
   let adminToken: string;
   let productId: string;
   const stripe = new StageEightProvider('STRIPE');
-  const paypal = new StageEightProvider('PAYPAL');
+  const paypalSandbox = new PayPalSandboxFixture();
+  const paypal = new PayPalProvider({
+    clientId: 'stage-8-client-id',
+    clientSecret: 'stage-8-client-secret',
+    fetch: paypalSandbox.fetch,
+    webhookId: 'stage-8-webhook-id',
+  });
   const email = `stage-8-${Date.now()}@example.com`;
   const orderIds: string[] = [];
 
@@ -233,9 +357,10 @@ describe('PayFlow Stage 8 PayPal and BullMQ acceptance (e2e)', () => {
     await waitForWebhookStatus(database, stripeEventId, 'PROCESSED');
 
     const crossProviderResponse = await postPayPalWebhook({
-      action: { kind: 'IGNORE', reason: 'Cross-provider namespace proof.' },
-      eventType: 'PAYFLOW.NAMESPACE.PROOF',
-      providerEventId: stripeEventId,
+      create_time: new Date().toISOString(),
+      event_type: 'PAYFLOW.NAMESPACE.PROOF',
+      id: stripeEventId,
+      resource: {},
     }).expect(200);
     expect(crossProviderResponse.body).toMatchObject({
       duplicate: false,
@@ -254,15 +379,19 @@ describe('PayFlow Stage 8 PayPal and BullMQ acceptance (e2e)', () => {
 
     const paypalEventId = `stage-8-paypal-${randomUUID()}`;
     const webhookResponse = await postPayPalWebhook({
-      action: {
-        kind: 'CAPTURE_PAYMENT',
-        orderId: paypalOrder.id,
-        paymentId: paypalCheckout.payment.id,
-        providerCheckoutSessionId:
-          paypalCheckout.payment.providerCheckoutSessionId!,
+      create_time: new Date().toISOString(),
+      event_type: 'CHECKOUT.ORDER.APPROVED',
+      id: paypalEventId,
+      resource: {
+        id: paypalCheckout.payment.providerCheckoutSessionId,
+        purchase_units: [
+          {
+            custom_id: paypalCheckout.payment.id,
+            invoice_id: paypalOrder.id,
+            reference_id: paypalCheckout.payment.id,
+          },
+        ],
       },
-      eventType: 'CHECKOUT.ORDER.APPROVED',
-      providerEventId: paypalEventId,
     }).expect(200);
     expect(webhookResponse.body).toMatchObject({
       duplicate: false,
@@ -287,7 +416,7 @@ describe('PayFlow Stage 8 PayPal and BullMQ acceptance (e2e)', () => {
         select: { status: true },
       }),
     ).resolves.toEqual({ status: 'PAID' });
-    expect(paypal.captureAttemptCount).toBe(2);
+    expect(paypalSandbox.captureAttemptCount).toBe(2);
 
     const persisted = await database.prisma.webhookEvent.findUniqueOrThrow({
       where: {
