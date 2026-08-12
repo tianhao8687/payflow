@@ -35,7 +35,7 @@ async function bootstrap() {
   const swaggerConfig = new DocumentBuilder()
     .setTitle('PayFlow API')
     .setDescription('PayFlow payment system REST API')
-    .setVersion('0.6.0')
+    .setVersion('0.7.0')
     .addBearerAuth({ bearerFormat: 'JWT', scheme: 'bearer', type: 'http' })
     .build();
   const documentFactory = () =>

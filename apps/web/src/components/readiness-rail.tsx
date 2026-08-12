@@ -23,7 +23,7 @@ const readinessItems = [
   },
   {
     title: 'Delivery',
-    detail: '10 failure scenarios + CI gates',
+    detail: 'Provider adapter + failure gates',
     icon: ContainerIcon,
   },
 ] as const;

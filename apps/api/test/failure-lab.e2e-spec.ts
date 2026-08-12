@@ -5,8 +5,20 @@ import { Test, TestingModule } from '@nestjs/testing';
 import {
   PaymentAttemptStatus,
   PaymentStatus,
-  RefundStatus,
+  RefundStatus as DatabaseRefundStatus,
 } from '@payflow/database';
+import {
+  type CreatePaymentInput,
+  type CreatePaymentResult,
+  PAYMENT_PROVIDER,
+  type PaymentProvider,
+  PaymentProviderError,
+  ProviderPaymentStatus,
+  ProviderRefundStatus,
+  type RefundPaymentInput,
+  type RefundPaymentResult,
+} from '@payflow/payment-core';
+import { StripeProvider } from '@payflow/payment-stripe';
 import request from 'supertest';
 import { App } from 'supertest/types';
 import Stripe from 'stripe';
@@ -17,19 +29,8 @@ import { DatabaseService } from './../src/database/database.service';
 import { ApiExceptionFilter } from './../src/http/api-exception.filter';
 import { OrderResponseDto } from './../src/orders/dto/order-response.dto';
 import { CheckoutSessionResponseDto } from './../src/payments/dto/payment-response.dto';
-import {
-  type CreateStripeCheckoutInput,
-  type StripeCheckoutResult,
-  StripeCheckoutGateway,
-  StripeCheckoutGatewayError,
-} from './../src/payments/stripe-checkout.gateway';
 import { ProductListResponseDto } from './../src/products/dto/product-list-response.dto';
 import { CreateRefundResponseDto } from './../src/refunds/dto/refund-response.dto';
-import {
-  type CreateStripeRefundInput,
-  type StripeRefundResult,
-  StripeRefundGateway,
-} from './../src/refunds/stripe-refund.gateway';
 import { WebhookResponseDto } from './../src/webhooks/dto/webhook-response.dto';
 import { WebhooksRepository } from './../src/webhooks/webhooks.repository';
 
@@ -45,10 +46,10 @@ interface LabFixture {
   providerPaymentId: string;
 }
 
-class FailureLabStripeCheckoutGateway {
-  readonly inputs: CreateStripeCheckoutInput[] = [];
+class FailureLabPaymentOperations {
+  readonly inputs: CreatePaymentInput[] = [];
   private failAcceptedOperation = false;
-  private readonly sessions = new Map<string, StripeCheckoutResult>();
+  private readonly sessions = new Map<string, CreatePaymentResult>();
 
   isConfigured(): boolean {
     return true;
@@ -58,9 +59,7 @@ class FailureLabStripeCheckoutGateway {
     this.failAcceptedOperation = true;
   }
 
-  async createCheckoutSession(
-    input: CreateStripeCheckoutInput,
-  ): Promise<StripeCheckoutResult> {
+  async createPayment(input: CreatePaymentInput): Promise<CreatePaymentResult> {
     this.inputs.push(input);
     await new Promise((resolve) => setTimeout(resolve, 20));
 
@@ -70,20 +69,23 @@ class FailureLabStripeCheckoutGateway {
     }
 
     const sequence = this.sessions.size + 1;
-    const result: StripeCheckoutResult = {
-      amountTotal: input.amount,
+    const result: CreatePaymentResult = {
+      amount: input.amount,
       currency: input.currency,
       expiresAt: new Date(Date.now() + 86_400_000),
-      paymentIntentId: null,
-      requestId: `req_failure_lab_${sequence}`,
-      sessionId: `cs_test_failure_lab_${sequence}`,
-      url: `https://checkout.stripe.test/c/failure_lab_${sequence}`,
+      providerCheckoutSessionId: `cs_test_failure_lab_${sequence}`,
+      providerPaymentId: null,
+      providerRequestId: `req_failure_lab_${sequence}`,
+      redirectUrl: `https://checkout.stripe.test/c/failure_lab_${sequence}`,
+      status: ProviderPaymentStatus.PENDING,
     };
     this.sessions.set(input.idempotencyKey, result);
 
     if (this.failAcceptedOperation) {
       this.failAcceptedOperation = false;
-      throw new StripeCheckoutGatewayError(
+      throw new PaymentProviderError(
+        'STRIPE',
+        'CREATE_PAYMENT',
         'StripeConnectionError',
         'The provider accepted the request but the response was lost.',
       );
@@ -97,8 +99,8 @@ class FailureLabStripeCheckoutGateway {
   }
 }
 
-class FailureLabStripeRefundGateway {
-  readonly inputs: CreateStripeRefundInput[] = [];
+class FailureLabRefundOperations {
+  readonly inputs: RefundPaymentInput[] = [];
   private blockedOperation:
     | {
         entered: Promise<void>;
@@ -106,7 +108,7 @@ class FailureLabStripeRefundGateway {
         released: Promise<void>;
       }
     | undefined;
-  private readonly refunds = new Map<string, StripeRefundResult>();
+  private readonly refunds = new Map<string, RefundPaymentResult>();
 
   isConfigured(): boolean {
     return true;
@@ -126,9 +128,7 @@ class FailureLabStripeRefundGateway {
     return { entered, release };
   }
 
-  async createRefund(
-    input: CreateStripeRefundInput,
-  ): Promise<StripeRefundResult> {
+  async refundPayment(input: RefundPaymentInput): Promise<RefundPaymentResult> {
     this.inputs.push(input);
 
     const replay = this.refunds.get(input.idempotencyKey);
@@ -137,15 +137,15 @@ class FailureLabStripeRefundGateway {
     }
 
     const sequence = this.refunds.size + 1;
-    const result: StripeRefundResult = {
+    const result: RefundPaymentResult = {
       amount: input.amount,
       currency: 'USD',
       failureCode: null,
       failureMessage: null,
       providerPaymentId: input.providerPaymentId,
       providerRefundId: `re_failure_lab_${sequence}`,
-      requestId: `req_refund_failure_lab_${sequence}`,
-      status: RefundStatus.SUCCEEDED,
+      providerRequestId: `req_refund_failure_lab_${sequence}`,
+      status: ProviderRefundStatus.SUCCEEDED,
     };
     this.refunds.set(input.idempotencyKey, result);
 
@@ -176,8 +176,21 @@ describe('PayFlow Stage 6 Failure Lab (e2e)', () => {
   const eventPrefix = `evt_payflow_failure_lab_${runId}`;
   const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET as string;
   const orderIds: string[] = [];
-  const fakeCheckout = new FailureLabStripeCheckoutGateway();
-  const fakeRefund = new FailureLabStripeRefundGateway();
+  const fakeCheckout = new FailureLabPaymentOperations();
+  const fakeRefund = new FailureLabRefundOperations();
+  const stripeVerifier = new StripeProvider({
+    secretKey: 'sk_test_payflow_failure_lab_adapter_only',
+    webhookSecret,
+  });
+  const fakeProvider: PaymentProvider = {
+    createPayment: (input) => fakeCheckout.createPayment(input),
+    getPayment: () =>
+      Promise.reject(new Error('Provider lookup is not used in this suite.')),
+    isConfigured: () => true,
+    name: 'STRIPE',
+    refundPayment: (input) => fakeRefund.refundPayment(input),
+    verifyWebhook: (input) => stripeVerifier.verifyWebhook(input),
+  };
   const atomicityConstraint = 'failure_lab_reject_paid_transition';
 
   beforeAll(async () => {
@@ -354,7 +367,7 @@ describe('PayFlow Stage 6 Failure Lab (e2e)', () => {
     const eventId = `${eventPrefix}_05_restart`;
     const event = paymentIntentEvent(fixture, eventId, 'succeeded');
     const crashModule = await createTestingModule({
-      processStripeEvent: jest
+      processProviderEvent: jest
         .fn()
         .mockRejectedValue(new Error('Simulated process termination.')),
     });
@@ -461,7 +474,9 @@ describe('PayFlow Stage 6 Failure Lab (e2e)', () => {
     const aggregate = await database.prisma.refund.aggregate({
       where: {
         paymentId: fixture.paymentId,
-        status: { in: [RefundStatus.PENDING, RefundStatus.SUCCEEDED] },
+        status: {
+          in: [DatabaseRefundStatus.PENDING, DatabaseRefundStatus.SUCCEEDED],
+        },
       },
       _sum: { amount: true },
     });
@@ -574,13 +589,11 @@ describe('PayFlow Stage 6 Failure Lab (e2e)', () => {
   });
 
   async function createTestingModule(
-    webhookRepository?: Pick<WebhooksRepository, 'processStripeEvent'>,
+    webhookRepository?: Pick<WebhooksRepository, 'processProviderEvent'>,
   ): Promise<TestingModule> {
     let builder = Test.createTestingModule({ imports: [AppModule] })
-      .overrideProvider(StripeCheckoutGateway)
-      .useValue(fakeCheckout)
-      .overrideProvider(StripeRefundGateway)
-      .useValue(fakeRefund);
+      .overrideProvider(PAYMENT_PROVIDER)
+      .useValue(fakeProvider);
 
     if (webhookRepository) {
       builder = builder

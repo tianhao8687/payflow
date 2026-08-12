@@ -3,6 +3,17 @@ import { randomUUID } from 'node:crypto';
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { RefundStatus } from '@payflow/database';
+import {
+  type CreatePaymentInput,
+  type CreatePaymentResult,
+  PAYMENT_PROVIDER,
+  type PaymentProvider,
+  ProviderPaymentStatus,
+  ProviderRefundStatus,
+  type RefundPaymentInput,
+  type RefundPaymentResult,
+} from '@payflow/payment-core';
+import { StripeProvider } from '@payflow/payment-stripe';
 import request from 'supertest';
 import { App } from 'supertest/types';
 import Stripe from 'stripe';
@@ -26,34 +37,22 @@ import { ProductListResponseDto } from './../src/products/dto/product-list-respo
 import { ProductResponseDto } from './../src/products/dto/product-response.dto';
 import { OrderResponseDto } from './../src/orders/dto/order-response.dto';
 import { CheckoutSessionResponseDto } from './../src/payments/dto/payment-response.dto';
-import {
-  type CreateStripeCheckoutInput,
-  type StripeCheckoutResult,
-  StripeCheckoutGateway,
-} from './../src/payments/stripe-checkout.gateway';
 import { CreateRefundResponseDto } from './../src/refunds/dto/refund-response.dto';
-import {
-  type CreateStripeRefundInput,
-  type StripeRefundResult,
-  StripeRefundGateway,
-} from './../src/refunds/stripe-refund.gateway';
 import { WebhookResponseDto } from './../src/webhooks/dto/webhook-response.dto';
 
 interface ErrorResponse {
   code: string;
 }
 
-class FakeStripeCheckoutGateway {
-  readonly inputs: CreateStripeCheckoutInput[] = [];
-  private readonly sessions = new Map<string, StripeCheckoutResult>();
+class FakePaymentOperations {
+  readonly inputs: CreatePaymentInput[] = [];
+  private readonly sessions = new Map<string, CreatePaymentResult>();
 
   isConfigured(): boolean {
     return true;
   }
 
-  async createCheckoutSession(
-    input: CreateStripeCheckoutInput,
-  ): Promise<StripeCheckoutResult> {
+  async createPayment(input: CreatePaymentInput): Promise<CreatePaymentResult> {
     this.inputs.push(input);
     await new Promise((resolve) => setTimeout(resolve, 20));
 
@@ -62,14 +61,15 @@ class FakeStripeCheckoutGateway {
       return replay;
     }
 
-    const result: StripeCheckoutResult = {
-      amountTotal: input.amount,
+    const result: CreatePaymentResult = {
+      amount: input.amount,
       currency: input.currency,
       expiresAt: new Date(Date.now() + 86_400_000),
-      paymentIntentId: null,
-      requestId: `req_test_${this.sessions.size + 1}`,
-      sessionId: `cs_test_${this.sessions.size + 1}`,
-      url: `https://checkout.stripe.test/c/payflow_${this.sessions.size + 1}`,
+      providerCheckoutSessionId: `cs_test_${this.sessions.size + 1}`,
+      providerPaymentId: null,
+      providerRequestId: `req_test_${this.sessions.size + 1}`,
+      redirectUrl: `https://checkout.stripe.test/c/payflow_${this.sessions.size + 1}`,
+      status: ProviderPaymentStatus.PENDING,
     };
     this.sessions.set(input.idempotencyKey, result);
     return result;
@@ -80,8 +80,8 @@ class FakeStripeCheckoutGateway {
   }
 }
 
-class FakeStripeRefundGateway {
-  readonly inputs: CreateStripeRefundInput[] = [];
+class FakeRefundOperations {
+  readonly inputs: RefundPaymentInput[] = [];
   private blockedOperation:
     | {
         entered: Promise<void>;
@@ -90,14 +90,14 @@ class FakeStripeRefundGateway {
         released: Promise<void>;
       }
     | undefined;
-  private readonly refunds = new Map<string, StripeRefundResult>();
-  private readonly statusQueue: RefundStatus[] = [];
+  private readonly refunds = new Map<string, RefundPaymentResult>();
+  private readonly statusQueue: ProviderRefundStatus[] = [];
 
   isConfigured(): boolean {
     return true;
   }
 
-  enqueueStatus(status: RefundStatus): void {
+  enqueueStatus(status: ProviderRefundStatus): void {
     this.statusQueue.push(status);
   }
 
@@ -115,9 +115,7 @@ class FakeStripeRefundGateway {
     return { entered, release };
   }
 
-  async createRefund(
-    input: CreateStripeRefundInput,
-  ): Promise<StripeRefundResult> {
+  async refundPayment(input: RefundPaymentInput): Promise<RefundPaymentResult> {
     this.inputs.push(input);
 
     const replay = this.refunds.get(input.idempotencyKey);
@@ -125,16 +123,16 @@ class FakeStripeRefundGateway {
       return replay;
     }
 
-    const status = this.statusQueue.shift() ?? RefundStatus.SUCCEEDED;
+    const status = this.statusQueue.shift() ?? ProviderRefundStatus.SUCCEEDED;
     const sequence = this.refunds.size + 1;
-    const result: StripeRefundResult = {
+    const result: RefundPaymentResult = {
       amount: input.amount,
       currency: 'USD',
       failureCode: null,
       failureMessage: null,
       providerPaymentId: input.providerPaymentId,
       providerRefundId: `re_payflow_stage_5_${sequence}`,
-      requestId: `req_refund_stage_5_${sequence}`,
+      providerRequestId: `req_refund_stage_5_${sequence}`,
       status,
     };
     this.refunds.set(input.idempotencyKey, result);
@@ -154,7 +152,7 @@ class FakeStripeRefundGateway {
   }
 }
 
-describe('PayFlow API acceptance through Stage 6 (e2e)', () => {
+describe('PayFlow API acceptance through Stage 7 (e2e)', () => {
   let app: INestApplication<App>;
   let database: DatabaseService;
   const userEmail = `stage-1-${Date.now()}@example.com`;
@@ -175,17 +173,28 @@ describe('PayFlow API acceptance through Stage 6 (e2e)', () => {
   let secondRefundId: string | undefined;
   const webhookEventPrefix = `evt_payflow_stage_5_${Date.now()}`;
   const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET as string;
-  const fakeStripe = new FakeStripeCheckoutGateway();
-  const fakeStripeRefund = new FakeStripeRefundGateway();
+  const fakeStripe = new FakePaymentOperations();
+  const fakeStripeRefund = new FakeRefundOperations();
+  const stripeVerifier = new StripeProvider({
+    secretKey: 'sk_test_payflow_e2e_adapter_only',
+    webhookSecret,
+  });
+  const fakeProvider: PaymentProvider = {
+    createPayment: (input) => fakeStripe.createPayment(input),
+    getPayment: () =>
+      Promise.reject(new Error('Provider lookup is not used in this suite.')),
+    isConfigured: () => true,
+    name: 'STRIPE',
+    refundPayment: (input) => fakeStripeRefund.refundPayment(input),
+    verifyWebhook: (input) => stripeVerifier.verifyWebhook(input),
+  };
 
   beforeAll(async () => {
     const moduleFixture: TestingModule = await Test.createTestingModule({
       imports: [AppModule],
     })
-      .overrideProvider(StripeCheckoutGateway)
-      .useValue(fakeStripe)
-      .overrideProvider(StripeRefundGateway)
-      .useValue(fakeStripeRefund)
+      .overrideProvider(PAYMENT_PROVIDER)
+      .useValue(fakeProvider)
       .compile();
 
     app = moduleFixture.createNestApplication({ rawBody: true });
@@ -204,7 +213,7 @@ describe('PayFlow API acceptance through Stage 6 (e2e)', () => {
   it('exposes system and seeded product reads without authentication', async () => {
     await request(app.getHttpServer()).get('/').expect(200).expect({
       service: 'PayFlow API',
-      stage: 6,
+      stage: 7,
       health: '/health',
       docs: '/docs',
     });
@@ -761,7 +770,7 @@ describe('PayFlow API acceptance through Stage 6 (e2e)', () => {
     const refundRequestId = randomUUID();
     const reason = 'Customer returned one item in the sandbox.';
     const requestBody = { amount: partialAmount, reason, refundRequestId };
-    fakeStripeRefund.enqueueStatus(RefundStatus.PENDING);
+    fakeStripeRefund.enqueueStatus(ProviderRefundStatus.PENDING);
 
     const firstResponse = await request(app.getHttpServer())
       .post(`/admin/payments/${stageThreePaymentId}/refunds`)

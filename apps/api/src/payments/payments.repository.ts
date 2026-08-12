@@ -43,9 +43,10 @@ const withAttemptCount = {
 export class PaymentsRepository {
   constructor(private readonly database: DatabaseService) {}
 
-  async reserveStripePayment(
+  async reservePayment(
     orderId: string,
     userId: string,
+    provider: PaymentProvider,
   ): Promise<PaymentReservation | null> {
     for (let retry = 0; retry < 3; retry += 1) {
       try {
@@ -73,7 +74,7 @@ export class PaymentsRepository {
             }
 
             const latest = await transaction.payment.findFirst({
-              where: { orderId, provider: PaymentProvider.STRIPE },
+              where: { orderId, provider },
               orderBy: { attemptNo: 'desc' },
               include: withAttemptCount,
             });
@@ -90,7 +91,7 @@ export class PaymentsRepository {
                 currency: order.currency,
                 idempotencyKey: `payment:create:${order.id}:${attemptNo}`,
                 orderId: order.id,
-                provider: PaymentProvider.STRIPE,
+                provider,
                 status: PaymentStatus.CREATED,
               },
               include: withAttemptCount,

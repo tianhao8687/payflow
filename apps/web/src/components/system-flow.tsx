@@ -45,7 +45,7 @@ export function SystemFlow() {
   return (
     <div
       className="relative grid grid-cols-2 gap-x-4 gap-y-10 sm:gap-x-7 lg:grid-cols-4 lg:gap-4"
-      aria-label="PayFlow Stage 6 system flow"
+      aria-label="PayFlow Stage 7 system flow"
     >
       <FlowNode
         icon={<CodeIcon />}

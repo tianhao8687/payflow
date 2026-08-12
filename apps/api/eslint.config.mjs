@@ -32,4 +32,44 @@ export default tseslint.config(
       'prettier/prettier': ['error', { endOfLine: 'auto' }],
     },
   },
+  {
+    files: ['src/**/*.ts'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: [
+            {
+              name: 'stripe',
+              message:
+                'Production Stripe SDK access belongs in @payflow/payment-stripe.',
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    files: ['src/**/*.ts'],
+    ignores: ['src/providers/payment-provider.module.ts'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: [
+            {
+              name: 'stripe',
+              message:
+                'Production Stripe SDK access belongs in @payflow/payment-stripe.',
+            },
+            {
+              name: '@payflow/payment-stripe',
+              message:
+                'Business modules depend on PaymentProvider, not StripeProvider.',
+            },
+          ],
+        },
+      ],
+    },
+  },
 );

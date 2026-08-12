@@ -52,7 +52,7 @@ export function AdminConsole({
         <div className="grid gap-8 px-6 py-8 sm:px-9 sm:py-10 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-end">
           <div>
             <p className="font-mono text-xs font-bold tracking-[0.16em] text-[#71a0ff] uppercase">
-              Stage 06 / Operations
+              Stage 07 / Operations
             </p>
             <h1 className="mt-4 text-4xl font-bold tracking-[-0.06em] sm:text-6xl">
               Payment control room

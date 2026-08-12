@@ -4,11 +4,10 @@ PayFlow is a full-stack payment-system portfolio project implemented one
 acceptance-gated stage at a time from the accompanying Codex implementation
 specification.
 
-> Current delivery: **Stage 6 — E2E and Failure Lab (accepted)**.
-> Ten deterministic failure scenarios now protect payment and refund
-> idempotency, webhook replay, transaction atomicity, and API authorization.
-> Local, database-backed, repeatability, production-build, and remote CI gates
-> have passed.
+> Current delivery: **Stage 7 — Provider Adapter (local gate passed)**.
+> Payment creation, lookup, optional capture/cancel, refunds, status mapping,
+> errors, and webhook verification now cross a provider-neutral contract.
+> Remote acceptance remains gated on the committed GitHub Actions run.
 
 ## Current architecture
 
@@ -18,9 +17,12 @@ flowchart LR
   Browser -->|register / login| Auth[NestJS auth API]
   Browser -->|cart IDs + quantities| Orders[NestJS orders API]
   Browser -->|order ID| Payments[NestJS payments API]
-  Payments -->|hosted Checkout + stable key| Stripe[Stripe Test]
   Admin[Admin operations console] -->|ADMIN JWT| Refunds[NestJS refunds API]
-  Refunds -->|stable refund key| Stripe
+  Payments -->|createPayment| Provider[PaymentProvider contract]
+  Refunds -->|refundPayment| Provider
+  Webhooks -->|verifyWebhook| Provider
+  Provider --> StripeAdapter[StripeProvider package]
+  StripeAdapter -->|hosted Checkout + stable keys| Stripe[Stripe Test]
   Stripe -->|signed raw Event| Webhooks[NestJS webhook module]
   Webhooks -->|verify + transactional inbox| DB
   Browser -->|Bearer JWT| Protected[Protected API boundary]
@@ -41,6 +43,19 @@ The V1 boundary remains a modular monolith. PostgreSQL is the source of truth,
 Prisma owns schema and migrations, passwords use bcrypt cost 12, and the API—not
 the browser—enforces authentication, roles, ownership, and order totals. Product
 and order amounts are integer minor units; floating-point money is forbidden.
+
+## Payment provider boundary
+
+`@payflow/payment-core` defines the framework-neutral `PaymentProvider`
+contract: `createPayment`, `getPayment`, optional `capturePayment` and
+`cancelPayment`, `refundPayment`, and `verifyWebhook`. It also owns normalized
+payment/refund states and the provider error envelope.
+
+`@payflow/payment-stripe` is the only production package that imports the Stripe
+SDK. It maps the contract to hosted Checkout, PaymentIntents, Refunds, and signed
+Events. NestJS business services inject only the core contract; an ESLint
+boundary rejects direct SDK imports or adapter imports outside the composition
+module. PayPal, Redis, BullMQ, and Worker integration remain Stage 8 work.
 
 ## Requirements
 
@@ -192,9 +207,11 @@ restart, and transaction-rollback scenarios; a passing Jest result confirms
 recovery and invariants.
 
 The GitHub Actions workflow starts PostgreSQL 18, applies every migration,
-seeds the sandbox, and runs the regular API E2E suite plus all ten failure
-scenarios. Evidence and scenario details are recorded in
-[`docs/stages/stage-6.md`](docs/stages/stage-6.md) and
+seeds the sandbox, and runs adapter contract tests, the regular API E2E suite,
+and all ten failure scenarios. Stage 7 evidence is recorded in
+[`docs/stages/stage-7.md`](docs/stages/stage-7.md) and
+[`docs/provider-adapter.md`](docs/provider-adapter.md). The unchanged Failure
+Lab evidence remains in
 [`docs/failure-lab-report.md`](docs/failure-lab-report.md).
 
 ## Workspace layout
@@ -205,12 +222,15 @@ apps/
   api/        NestJS 11 modular-monolith REST API and Swagger
 packages/
   database/   Prisma 7 schema, migrations, seed, generated client boundary
+  payment-core/    Provider-neutral contract, states, and errors
+  payment-stripe/  Stripe SDK adapter and contract tests
   shared/     Framework-neutral shared contracts
 docs/
   adr/        Architecture decision records
   design/     Stage-scoped visual specifications and QA captures
   refund-design.md   Refund locking, idempotency, and administration contract
   failure-lab-report.md  Stage 6 fault-injection scenarios and evidence
+  provider-adapter.md    Stage 7 provider contract and Stripe mapping
   webhook-design.md  Raw-body, deduplication, and transaction contract
 infra/
   docker/     Container notes

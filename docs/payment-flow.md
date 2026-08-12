@@ -1,12 +1,13 @@
 # PayFlow payment flow
 
-## Authoritative path through Stage 6
+## Authoritative path through Stage 7
 
 ```mermaid
 sequenceDiagram
   participant U as Browser
   participant API as NestJS API
   participant DB as PostgreSQL
+  participant P as PaymentProvider / StripeProvider
   participant S as Stripe Test
   participant A as ADMIN browser
 
@@ -14,21 +15,26 @@ sequenceDiagram
   API->>DB: Reprice and persist order snapshots
   U->>API: POST /payments/checkout-session (orderId)
   API->>DB: Reserve Payment + stable idempotency key
-  API->>S: Create hosted Checkout Session
-  S-->>API: Session ID + hosted URL
+  API->>P: createPayment(input + stable key)
+  P->>S: Create hosted Checkout Session
+  S-->>P: Session ID + hosted URL
+  P-->>API: Normalized CreatePaymentResult
   API->>DB: Persist provider references; Payment=PENDING
   API-->>U: Hosted URL
   U->>S: Complete sandbox checkout
   S->>API: POST /webhooks/stripe (raw Event + signature)
-  API->>API: Verify exact bytes and map event
+  API->>P: verifyWebhook(raw bytes + signature)
+  P-->>API: VerifiedWebhookEvent + normalized action
   API->>DB: Persist/dedupe event and atomically transition state
   DB-->>API: Payment=SUCCEEDED, Order=PAID
   U->>API: GET /payments/:id or GET /orders/:id
   API-->>U: Authoritative local status
   A->>API: POST /admin/payments/:id/refunds
   API->>DB: Lock and reserve PENDING Refund + audit
-  API->>S: Create Refund with stable Idempotency-Key
-  S-->>API: Refund provider snapshot
+  API->>P: refundPayment(input + stable key)
+  P->>S: Create Refund
+  S-->>P: Refund provider snapshot
+  P-->>API: Normalized RefundPaymentResult
   API->>DB: Project Refund + Payment + Order
   S->>API: Signed refund.created/updated/failed
   API->>DB: Dedupe and finalize refund state atomically
@@ -58,7 +64,7 @@ balance checks count `PENDING + SUCCEEDED` rows under that lock. Duplicate
 webhook deliveries also take an event-scoped advisory lock and are ultimately
 protected by the database unique constraint.
 
-## Supported events through Stage 6
+## Supported events through Stage 7
 
 | Stripe Event                               | Local decision                                    |
 | ------------------------------------------ | ------------------------------------------------- |

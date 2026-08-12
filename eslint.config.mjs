@@ -28,4 +28,20 @@ export default tseslint.config(
       '@typescript-eslint/explicit-function-return-type': 'off',
     },
   },
+  {
+    files: ['packages/payment-core/**/*.ts'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: [
+            {
+              name: 'stripe',
+              message: 'payment-core must remain provider and SDK independent.',
+            },
+          ],
+        },
+      ],
+    },
+  },
 );

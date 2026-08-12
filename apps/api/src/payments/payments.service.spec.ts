@@ -1,5 +1,10 @@
 import { ConfigService } from '@nestjs/config';
 import { OrderStatus, PaymentProvider, PaymentStatus } from '@payflow/database';
+import {
+  type PaymentProvider as PaymentProviderAdapter,
+  PaymentProviderError,
+  ProviderPaymentStatus,
+} from '@payflow/payment-core';
 
 import type { ApiEnvironment } from '../config/environment';
 import {
@@ -8,22 +13,19 @@ import {
   PaymentsRepository,
 } from './payments.repository';
 import { PaymentsService } from './payments.service';
-import {
-  StripeCheckoutGateway,
-  StripeCheckoutGatewayError,
-} from './stripe-checkout.gateway';
 
 describe('PaymentsService', () => {
   let repository: {
     completeCheckoutSession: jest.Mock;
     failProviderAttempt: jest.Mock;
     findOwnedById: jest.Mock;
-    reserveStripePayment: jest.Mock;
+    reservePayment: jest.Mock;
     startProviderAttempt: jest.Mock;
   };
-  let stripe: {
-    createCheckoutSession: jest.Mock;
+  let provider: {
+    createPayment: jest.Mock;
     isConfigured: jest.Mock;
+    name: string;
   };
   let service: PaymentsService;
 
@@ -32,12 +34,13 @@ describe('PaymentsService', () => {
       completeCheckoutSession: jest.fn(),
       failProviderAttempt: jest.fn(),
       findOwnedById: jest.fn(),
-      reserveStripePayment: jest.fn(),
+      reservePayment: jest.fn(),
       startProviderAttempt: jest.fn(),
     };
-    stripe = {
-      createCheckoutSession: jest.fn(),
+    provider = {
+      createPayment: jest.fn(),
       isConfigured: jest.fn().mockReturnValue(true),
+      name: 'STRIPE',
     };
     const config = {
       get: jest.fn().mockReturnValue('http://localhost:3000'),
@@ -45,7 +48,7 @@ describe('PaymentsService', () => {
     service = new PaymentsService(
       config,
       repository as unknown as PaymentsRepository,
-      stripe as unknown as StripeCheckoutGateway,
+      provider as unknown as PaymentProviderAdapter,
     );
   });
 
@@ -53,16 +56,17 @@ describe('PaymentsService', () => {
     const reservation = createReservation();
     const reservedPayment = requireReservedPayment(reservation);
     const expiresAt = new Date('2026-08-13T12:00:00.000Z');
-    repository.reserveStripePayment.mockResolvedValue(reservation);
+    repository.reservePayment.mockResolvedValue(reservation);
     repository.startProviderAttempt.mockResolvedValue({ id: 'attempt-id' });
-    stripe.createCheckoutSession.mockResolvedValue({
-      amountTotal: 3998,
+    provider.createPayment.mockResolvedValue({
+      amount: 3998,
       currency: 'USD',
       expiresAt,
-      paymentIntentId: null,
-      requestId: 'req_stage_3',
-      sessionId: 'cs_test_stage_3',
-      url: 'https://checkout.stripe.test/c/payflow',
+      providerCheckoutSessionId: 'cs_test_stage_3',
+      providerPaymentId: null,
+      providerRequestId: 'req_stage_3',
+      redirectUrl: 'https://checkout.stripe.test/c/payflow',
+      status: ProviderPaymentStatus.PENDING,
     });
     const completed = {
       ...reservedPayment,
@@ -81,7 +85,7 @@ describe('PaymentsService', () => {
       payment: { amount: 3998, status: PaymentStatus.PENDING },
       reused: false,
     });
-    expect(stripe.createCheckoutSession).toHaveBeenCalledWith(
+    expect(provider.createPayment).toHaveBeenCalledWith(
       expect.objectContaining({
         amount: 3998,
         currency: 'USD',
@@ -111,7 +115,7 @@ describe('PaymentsService', () => {
       providerCheckoutSessionId: 'cs_test_reused',
       status: PaymentStatus.PENDING,
     };
-    repository.reserveStripePayment.mockResolvedValue(reservation);
+    repository.reservePayment.mockResolvedValue(reservation);
 
     await expect(
       service.createCheckoutSession('user-id', { orderId: 'order-id' }),
@@ -119,14 +123,16 @@ describe('PaymentsService', () => {
       checkoutUrl: 'https://checkout.stripe.test/c/reused',
       reused: true,
     });
-    expect(stripe.createCheckoutSession).not.toHaveBeenCalled();
+    expect(provider.createPayment).not.toHaveBeenCalled();
   });
 
   it('records provider failures while preserving the stable retry key', async () => {
-    repository.reserveStripePayment.mockResolvedValue(createReservation());
+    repository.reservePayment.mockResolvedValue(createReservation());
     repository.startProviderAttempt.mockResolvedValue({ id: 'attempt-id' });
-    stripe.createCheckoutSession.mockRejectedValue(
-      new StripeCheckoutGatewayError(
+    provider.createPayment.mockRejectedValue(
+      new PaymentProviderError(
+        'STRIPE',
+        'CREATE_PAYMENT',
         'api_connection_error',
         'Connection failed safely.',
         'req_failed',
@@ -145,12 +151,12 @@ describe('PaymentsService', () => {
   });
 
   it('fails closed when Stripe test mode is not configured', async () => {
-    stripe.isConfigured.mockReturnValue(false);
+    provider.isConfigured.mockReturnValue(false);
 
     await expect(
       service.createCheckoutSession('user-id', { orderId: 'order-id' }),
     ).rejects.toMatchObject({ status: 503 });
-    expect(repository.reserveStripePayment).not.toHaveBeenCalled();
+    expect(repository.reservePayment).not.toHaveBeenCalled();
   });
 });
 

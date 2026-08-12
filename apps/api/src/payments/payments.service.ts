@@ -1,13 +1,24 @@
 import {
   BadGatewayException,
   ConflictException,
+  Inject,
   Injectable,
   NotFoundException,
   ServiceUnavailableException,
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { OrderStatus, PaymentStatus } from '@payflow/database';
+import {
+  OrderStatus,
+  PaymentProvider as DatabasePaymentProvider,
+  PaymentStatus,
+} from '@payflow/database';
+import {
+  PAYMENT_PROVIDER,
+  type PaymentProvider,
+  PaymentProviderCapability,
+  PaymentProviderError,
+} from '@payflow/payment-core';
 
 import type { ApiEnvironment } from '../config/environment';
 import { CreateCheckoutSessionRequestDto } from './dto/create-checkout-session-request.dto';
@@ -20,10 +31,6 @@ import {
   type PaymentWithCount,
   PaymentsRepository,
 } from './payments.repository';
-import {
-  StripeCheckoutGateway,
-  StripeCheckoutGatewayError,
-} from './stripe-checkout.gateway';
 
 @Injectable()
 export class PaymentsService {
@@ -32,7 +39,8 @@ export class PaymentsService {
   constructor(
     config: ConfigService<ApiEnvironment, true>,
     private readonly paymentsRepository: PaymentsRepository,
-    private readonly stripeCheckout: StripeCheckoutGateway,
+    @Inject(PAYMENT_PROVIDER)
+    private readonly paymentProvider: PaymentProvider,
   ) {
     this.appBaseUrl = config
       .get('APP_BASE_URL', { infer: true })
@@ -43,16 +51,17 @@ export class PaymentsService {
     userId: string,
     request: CreateCheckoutSessionRequestDto,
   ): Promise<CheckoutSessionResponseDto> {
-    if (!this.stripeCheckout.isConfigured()) {
+    if (!this.paymentProvider.isConfigured(PaymentProviderCapability.PAYMENT)) {
       throw new ServiceUnavailableException({
         code: 'PAYMENT_PROVIDER_NOT_CONFIGURED',
-        message: 'Stripe test mode is not configured for this environment.',
+        message: 'The sandbox payment provider is not configured.',
       });
     }
 
-    const reservation = await this.paymentsRepository.reserveStripePayment(
+    const reservation = await this.paymentsRepository.reservePayment(
       request.orderId,
       userId,
+      this.databaseProvider(),
     );
 
     if (!reservation) {
@@ -73,7 +82,7 @@ export class PaymentsService {
     if (reservation.order.totalAmount <= 0) {
       throw new UnprocessableEntityException({
         code: 'PAYMENT_AMOUNT_INVALID',
-        message: 'Stripe Checkout requires an order total greater than zero.',
+        message: 'Hosted checkout requires an order total greater than zero.',
       });
     }
 
@@ -106,7 +115,7 @@ export class PaymentsService {
     );
 
     try {
-      const result = await this.stripeCheckout.createCheckoutSession({
+      const result = await this.paymentProvider.createPayment({
         amount: reservation.payment.amount,
         cancelUrl: `${this.appBaseUrl}/orders/${reservation.order.id}?checkout=cancelled`,
         currency: reservation.payment.currency,
@@ -123,13 +132,15 @@ export class PaymentsService {
       });
 
       if (
-        result.amountTotal !== reservation.payment.amount ||
+        result.amount !== reservation.payment.amount ||
         result.currency !== reservation.payment.currency
       ) {
-        throw new StripeCheckoutGatewayError(
-          'STRIPE_AMOUNT_MISMATCH',
-          'Stripe returned an amount or currency that differs from the local payment.',
-          result.requestId,
+        throw new PaymentProviderError(
+          this.paymentProvider.name,
+          'CREATE_PAYMENT',
+          'PROVIDER_AMOUNT_MISMATCH',
+          'The provider returned an amount or currency that differs from the local payment.',
+          result.providerRequestId,
         );
       }
 
@@ -142,15 +153,15 @@ export class PaymentsService {
         providerAttempt.id,
         {
           checkoutExpiresAt: result.expiresAt,
-          checkoutUrl: result.url,
-          providerCheckoutSessionId: result.sessionId,
-          providerPaymentId: result.paymentIntentId,
-          providerRequestId: result.requestId,
+          checkoutUrl: result.redirectUrl,
+          providerCheckoutSessionId: result.providerCheckoutSessionId,
+          providerPaymentId: result.providerPaymentId,
+          providerRequestId: result.providerRequestId,
         },
       );
 
       return {
-        checkoutUrl: result.url,
+        checkoutUrl: result.redirectUrl,
         expiresAt: result.expiresAt.toISOString(),
         payment: this.toResponse(payment),
         reused: !reservation.created,
@@ -166,9 +177,12 @@ export class PaymentsService {
 
       throw new BadGatewayException({
         code: 'PAYMENT_PROVIDER_ERROR',
-        details: { provider: 'STRIPE', providerCode: failure.code },
+        details: {
+          provider: this.paymentProvider.name,
+          providerCode: failure.code,
+        },
         message:
-          'Stripe Checkout could not be created. Retrying is safe and reuses the same idempotency key.',
+          'The hosted payment could not be created. Retrying is safe and reuses the same idempotency key.',
       });
     }
   }
@@ -217,7 +231,7 @@ export class PaymentsService {
     message: string;
     requestId: string | null;
   } {
-    if (error instanceof StripeCheckoutGatewayError) {
+    if (error instanceof PaymentProviderError) {
       return {
         code: error.code.slice(0, 100),
         message: error.message.slice(0, 500),
@@ -226,10 +240,22 @@ export class PaymentsService {
     }
 
     return {
-      code: 'STRIPE_RESPONSE_PERSISTENCE_FAILED',
-      message: 'The verified Stripe response could not be persisted.',
+      code: 'PROVIDER_RESPONSE_PERSISTENCE_FAILED',
+      message: 'The verified provider response could not be persisted.',
       requestId: null,
     };
+  }
+
+  private databaseProvider(): DatabasePaymentProvider {
+    if (this.paymentProvider.name === DatabasePaymentProvider.STRIPE) {
+      return DatabasePaymentProvider.STRIPE;
+    }
+
+    throw new ServiceUnavailableException({
+      code: 'PAYMENT_PROVIDER_UNSUPPORTED',
+      details: { provider: this.paymentProvider.name },
+      message: 'The configured payment provider is not enabled locally.',
+    });
   }
 
   private toResponse(payment: PaymentWithCount): PaymentResponseDto {

@@ -1,57 +1,17 @@
-import { PaymentStatus, RefundStatus } from '@payflow/database';
+import {
+  type ProviderPaymentTransitionAction,
+  ProviderPaymentStatus,
+  ProviderRefundStatus,
+  type ProviderWebhookAction,
+} from '@payflow/payment-core';
 import Stripe from 'stripe';
-
-interface StripeWebhookIgnoredAction {
-  kind: 'IGNORE';
-  reason: string;
-}
-
-interface StripeWebhookRejectedAction {
-  kind: 'REJECT';
-  reason: string;
-}
-
-export interface StripePaymentTransitionAction {
-  amount: number | null;
-  currency: string | null;
-  kind: 'PAYMENT_TRANSITION';
-  orderId: string;
-  paymentId: string;
-  providerCheckoutSessionId: string | null;
-  providerPaymentId: string | null;
-  targetStatus:
-    | typeof PaymentStatus.PROCESSING
-    | typeof PaymentStatus.SUCCEEDED
-    | typeof PaymentStatus.FAILED;
-}
-
-export interface StripeRefundSyncAction {
-  amount: number;
-  currency: string;
-  failureCode: string | null;
-  failureMessage: string | null;
-  kind: 'REFUND_SYNC';
-  orderId: string;
-  paymentId: string;
-  providerPaymentId: string | null;
-  providerRefundId: string;
-  providerRequestId: string | null;
-  refundId: string;
-  status: RefundStatus;
-}
-
-export type StripeWebhookAction =
-  | StripeWebhookIgnoredAction
-  | StripeWebhookRejectedAction
-  | StripePaymentTransitionAction
-  | StripeRefundSyncAction;
 
 const uuidPattern =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export function mapStripeWebhookEvent(
   event: Stripe.Event,
-): StripeWebhookAction {
+): ProviderWebhookAction {
   if (event.livemode) {
     return {
       kind: 'REJECT',
@@ -64,11 +24,11 @@ export function mapStripeWebhookEvent(
       const session = event.data.object;
 
       if (session.payment_status === 'paid') {
-        return fromCheckoutSession(session, PaymentStatus.SUCCEEDED);
+        return fromCheckoutSession(session, ProviderPaymentStatus.SUCCEEDED);
       }
 
       if (session.payment_status === 'unpaid') {
-        return fromCheckoutSession(session, PaymentStatus.PROCESSING);
+        return fromCheckoutSession(session, ProviderPaymentStatus.PROCESSING);
       }
 
       return {
@@ -77,15 +37,27 @@ export function mapStripeWebhookEvent(
       };
     }
     case 'checkout.session.async_payment_succeeded':
-      return fromCheckoutSession(event.data.object, PaymentStatus.SUCCEEDED);
+      return fromCheckoutSession(
+        event.data.object,
+        ProviderPaymentStatus.SUCCEEDED,
+      );
     case 'checkout.session.async_payment_failed':
-      return fromCheckoutSession(event.data.object, PaymentStatus.FAILED);
+      return fromCheckoutSession(
+        event.data.object,
+        ProviderPaymentStatus.FAILED,
+      );
     case 'payment_intent.processing':
-      return fromPaymentIntent(event.data.object, PaymentStatus.PROCESSING);
+      return fromPaymentIntent(
+        event.data.object,
+        ProviderPaymentStatus.PROCESSING,
+      );
     case 'payment_intent.succeeded':
-      return fromPaymentIntent(event.data.object, PaymentStatus.SUCCEEDED);
+      return fromPaymentIntent(
+        event.data.object,
+        ProviderPaymentStatus.SUCCEEDED,
+      );
     case 'payment_intent.payment_failed':
-      return fromPaymentIntent(event.data.object, PaymentStatus.FAILED);
+      return fromPaymentIntent(event.data.object, ProviderPaymentStatus.FAILED);
     case 'refund.created':
     case 'refund.updated':
     case 'refund.failed':
@@ -112,7 +84,7 @@ function fromRefund(
   refund: Stripe.Refund,
   providerRequestId: string | null,
   forcedFailure: boolean,
-): StripeWebhookAction {
+): ProviderWebhookAction {
   const identifiers = readRefundIdentifiers(refund.metadata);
 
   if (!identifiers) {
@@ -120,7 +92,7 @@ function fromRefund(
   }
 
   const status = forcedFailure
-    ? RefundStatus.FAILED
+    ? ProviderRefundStatus.FAILED
     : mapRefundStatus(refund.status);
 
   if (!status) {
@@ -134,11 +106,11 @@ function fromRefund(
     amount: refund.amount,
     currency: refund.currency.toUpperCase(),
     failureCode:
-      status === RefundStatus.FAILED
+      status === ProviderRefundStatus.FAILED
         ? (refund.failure_reason ?? refund.status ?? 'failed')
         : null,
     failureMessage:
-      status === RefundStatus.FAILED
+      status === ProviderRefundStatus.FAILED
         ? 'Stripe reported that the refund failed or was canceled.'
         : null,
     kind: 'REFUND_SYNC',
@@ -152,8 +124,8 @@ function fromRefund(
 
 function fromCheckoutSession(
   session: Stripe.Checkout.Session,
-  targetStatus: StripePaymentTransitionAction['targetStatus'],
-): StripeWebhookAction {
+  targetStatus: ProviderPaymentTransitionAction['targetStatus'],
+): ProviderWebhookAction {
   const identifiers = readIdentifiers(session.metadata);
 
   if (!identifiers) {
@@ -173,8 +145,8 @@ function fromCheckoutSession(
 
 function fromPaymentIntent(
   paymentIntent: Stripe.PaymentIntent,
-  targetStatus: StripePaymentTransitionAction['targetStatus'],
-): StripeWebhookAction {
+  targetStatus: ProviderPaymentTransitionAction['targetStatus'],
+): ProviderWebhookAction {
   const identifiers = readIdentifiers(paymentIntent.metadata);
 
   if (!identifiers) {
@@ -233,17 +205,17 @@ function readRefundIdentifiers(metadata: Stripe.Metadata | null): {
   return { orderId, paymentId, refundId };
 }
 
-function mapRefundStatus(status: string | null): RefundStatus | null {
+function mapRefundStatus(status: string | null): ProviderRefundStatus | null {
   if (status === 'succeeded') {
-    return RefundStatus.SUCCEEDED;
+    return ProviderRefundStatus.SUCCEEDED;
   }
 
   if (status === 'failed' || status === 'canceled') {
-    return RefundStatus.FAILED;
+    return ProviderRefundStatus.FAILED;
   }
 
   if (status === 'pending' || status === 'requires_action') {
-    return RefundStatus.PENDING;
+    return ProviderRefundStatus.PENDING;
   }
 
   return null;
@@ -261,7 +233,7 @@ function normalizeCurrency(currency: string | null): string | null {
   return currency?.toUpperCase() ?? null;
 }
 
-function missingMetadata(objectId: string): StripeWebhookIgnoredAction {
+function missingMetadata(objectId: string): ProviderWebhookAction {
   return {
     kind: 'IGNORE',
     reason: `Stripe object ${objectId} has no valid PayFlow metadata.`,

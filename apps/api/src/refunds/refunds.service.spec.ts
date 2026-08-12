@@ -4,6 +4,11 @@ import {
   PaymentStatus,
   RefundStatus,
 } from '@payflow/database';
+import {
+  type PaymentProvider as PaymentProviderAdapter,
+  PaymentProviderError,
+  ProviderRefundStatus,
+} from '@payflow/payment-core';
 
 import {
   type RefundReservation,
@@ -11,10 +16,6 @@ import {
   RefundsRepository,
 } from './refunds.repository';
 import { RefundsService } from './refunds.service';
-import {
-  StripeRefundGateway,
-  StripeRefundGatewayError,
-} from './stripe-refund.gateway';
 
 describe('RefundsService', () => {
   let repository: {
@@ -22,9 +23,10 @@ describe('RefundsService', () => {
     recordProviderFailure: jest.Mock;
     reserve: jest.Mock;
   };
-  let stripe: {
-    createRefund: jest.Mock;
+  let provider: {
     isConfigured: jest.Mock;
+    name: string;
+    refundPayment: jest.Mock;
   };
   let service: RefundsService;
 
@@ -34,28 +36,29 @@ describe('RefundsService', () => {
       recordProviderFailure: jest.fn(),
       reserve: jest.fn(),
     };
-    stripe = {
-      createRefund: jest.fn(),
+    provider = {
       isConfigured: jest.fn().mockReturnValue(true),
+      name: 'STRIPE',
+      refundPayment: jest.fn(),
     };
     service = new RefundsService(
       repository as unknown as RefundsRepository,
-      stripe as unknown as StripeRefundGateway,
+      provider as unknown as PaymentProviderAdapter,
     );
   });
 
   it('applies a verified provider result with the same reserved identifiers', async () => {
     const pending = refundFixture();
     repository.reserve.mockResolvedValue(reservation(pending));
-    stripe.createRefund.mockResolvedValue({
+    provider.refundPayment.mockResolvedValue({
       amount: pending.amount,
       currency: 'USD',
       failureCode: null,
       failureMessage: null,
       providerPaymentId: pending.payment.providerPaymentId,
       providerRefundId: 're_test_service',
-      requestId: 'req_test_service',
-      status: RefundStatus.SUCCEEDED,
+      providerRequestId: 'req_test_service',
+      status: ProviderRefundStatus.SUCCEEDED,
     });
     const succeeded = refundFixture({
       providerRefundId: 're_test_service',
@@ -77,7 +80,7 @@ describe('RefundsService', () => {
       },
       reused: false,
     });
-    expect(stripe.createRefund).toHaveBeenCalledWith({
+    expect(provider.refundPayment).toHaveBeenCalledWith({
       amount: 1200,
       idempotencyKey: pending.idempotencyKey,
       orderId: pending.payment.orderId,
@@ -114,14 +117,16 @@ describe('RefundsService', () => {
       refund: { id: succeeded.id, status: RefundStatus.SUCCEEDED },
       reused: true,
     });
-    expect(stripe.createRefund).not.toHaveBeenCalled();
+    expect(provider.refundPayment).not.toHaveBeenCalled();
   });
 
   it('records deterministic Stripe rejection as a terminal failed refund', async () => {
     const pending = refundFixture();
     repository.reserve.mockResolvedValue(reservation(pending));
-    stripe.createRefund.mockRejectedValue(
-      new StripeRefundGatewayError(
+    provider.refundPayment.mockRejectedValue(
+      new PaymentProviderError(
+        'STRIPE',
+        'REFUND_PAYMENT',
         'charge_already_refunded',
         'Nothing remains refundable.',
         'req_rejected',
@@ -154,8 +159,10 @@ describe('RefundsService', () => {
   it('leaves an unknown Stripe outcome pending for same-key retry', async () => {
     const pending = refundFixture();
     repository.reserve.mockResolvedValue(reservation(pending));
-    stripe.createRefund.mockRejectedValue(
-      new StripeRefundGatewayError(
+    provider.refundPayment.mockRejectedValue(
+      new PaymentProviderError(
+        'STRIPE',
+        'REFUND_PAYMENT',
         'StripeConnectionError',
         'The connection closed without a response.',
         null,
@@ -177,7 +184,7 @@ describe('RefundsService', () => {
   });
 
   it('fails closed before reserving when Stripe test mode is absent', async () => {
-    stripe.isConfigured.mockReturnValue(false);
+    provider.isConfigured.mockReturnValue(false);
 
     await expect(
       service.create('payment-id', 'admin-id', {

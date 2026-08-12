@@ -1,11 +1,22 @@
 import {
   BadGatewayException,
   ConflictException,
+  Inject,
   Injectable,
   NotFoundException,
   ServiceUnavailableException,
 } from '@nestjs/common';
-import { RefundStatus } from '@payflow/database';
+import {
+  PaymentProvider as DatabasePaymentProvider,
+  RefundStatus,
+} from '@payflow/database';
+import {
+  PAYMENT_PROVIDER,
+  type PaymentProvider,
+  PaymentProviderCapability,
+  PaymentProviderError,
+  ProviderRefundStatus,
+} from '@payflow/payment-core';
 
 import type { CreateRefundRequestDto } from './dto/create-refund-request.dto';
 import {
@@ -16,16 +27,13 @@ import {
   RefundsRepository,
   type RefundWithPayment,
 } from './refunds.repository';
-import {
-  StripeRefundGateway,
-  StripeRefundGatewayError,
-} from './stripe-refund.gateway';
 
 @Injectable()
 export class RefundsService {
   constructor(
     private readonly refundsRepository: RefundsRepository,
-    private readonly stripeRefund: StripeRefundGateway,
+    @Inject(PAYMENT_PROVIDER)
+    private readonly paymentProvider: PaymentProvider,
   ) {}
 
   async create(
@@ -33,10 +41,10 @@ export class RefundsService {
     actorId: string,
     request: CreateRefundRequestDto,
   ): Promise<CreateRefundResponseDto> {
-    if (!this.stripeRefund.isConfigured()) {
+    if (!this.paymentProvider.isConfigured(PaymentProviderCapability.REFUND)) {
       throw new ServiceUnavailableException({
         code: 'REFUND_PROVIDER_NOT_CONFIGURED',
-        message: 'Stripe test mode is not configured for refunds.',
+        message: 'The sandbox payment provider is not configured for refunds.',
       });
     }
 
@@ -44,6 +52,7 @@ export class RefundsService {
       paymentId,
       actorId,
       request,
+      this.databaseProvider(),
     );
 
     if (reservation.kind === 'NOT_FOUND') {
@@ -64,8 +73,7 @@ export class RefundsService {
     if (reservation.kind === 'PROVIDER_REFERENCE_MISSING') {
       throw new ConflictException({
         code: 'PAYMENT_PROVIDER_REFERENCE_MISSING',
-        message:
-          'The successful payment has no Stripe PaymentIntent reference.',
+        message: 'The successful payment has no provider payment reference.',
       });
     }
 
@@ -90,7 +98,7 @@ export class RefundsService {
     const refund = reservation.refund;
 
     try {
-      const result = await this.stripeRefund.createRefund({
+      const result = await this.paymentProvider.refundPayment({
         amount: refund.amount,
         idempotencyKey: refund.idempotencyKey,
         orderId: refund.payment.orderId,
@@ -104,7 +112,7 @@ export class RefundsService {
         actorId,
         {
           ...result,
-          providerRequestId: result.requestId,
+          status: this.localRefundStatus(result.status),
         },
       );
 
@@ -130,13 +138,13 @@ export class RefundsService {
           ? 'REFUND_PROVIDER_OUTCOME_UNKNOWN'
           : 'REFUND_PROVIDER_ERROR',
         details: {
-          provider: 'STRIPE',
+          provider: this.paymentProvider.name,
           providerCode: failure.code,
           retryWithSameRefundRequestId: failure.outcomeUnknown,
         },
         message: failure.outcomeUnknown
-          ? 'Stripe refund outcome is unknown. Retry with the same refundRequestId.'
-          : 'Stripe rejected the refund request.',
+          ? 'The provider refund outcome is unknown. Retry with the same refundRequestId.'
+          : 'The provider rejected the refund request.',
       });
     }
   }
@@ -163,7 +171,7 @@ export class RefundsService {
     outcomeUnknown: boolean;
     requestId: string | null;
   } {
-    if (error instanceof StripeRefundGatewayError) {
+    if (error instanceof PaymentProviderError) {
       return {
         code: error.code.slice(0, 100),
         message: error.message.slice(0, 500),
@@ -174,9 +182,32 @@ export class RefundsService {
 
     return {
       code: 'REFUND_RESPONSE_PERSISTENCE_FAILED',
-      message: 'The verified Stripe refund response could not be persisted.',
+      message: 'The verified provider refund response could not be persisted.',
       outcomeUnknown: true,
       requestId: null,
     };
+  }
+
+  private databaseProvider(): DatabasePaymentProvider {
+    if (this.paymentProvider.name === DatabasePaymentProvider.STRIPE) {
+      return DatabasePaymentProvider.STRIPE;
+    }
+
+    throw new ServiceUnavailableException({
+      code: 'PAYMENT_PROVIDER_UNSUPPORTED',
+      details: { provider: this.paymentProvider.name },
+      message: 'The configured payment provider is not enabled locally.',
+    });
+  }
+
+  private localRefundStatus(status: ProviderRefundStatus): RefundStatus {
+    switch (status) {
+      case ProviderRefundStatus.PENDING:
+        return RefundStatus.PENDING;
+      case ProviderRefundStatus.SUCCEEDED:
+        return RefundStatus.SUCCEEDED;
+      case ProviderRefundStatus.FAILED:
+        return RefundStatus.FAILED;
+    }
   }
 }

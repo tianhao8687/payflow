@@ -1,22 +1,25 @@
 import {
   BadRequestException,
+  Inject,
   Injectable,
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { WebhookEventStatus } from '@payflow/database';
+import {
+  PAYMENT_PROVIDER,
+  type PaymentProvider,
+  PaymentProviderCapability,
+  PaymentProviderError,
+} from '@payflow/payment-core';
 
 import { WebhookResponseDto } from './dto/webhook-response.dto';
-import { mapStripeWebhookEvent } from './stripe-webhook-event';
-import {
-  StripeWebhookSignatureError,
-  StripeWebhookVerifier,
-} from './stripe-webhook.verifier';
 import { WebhooksRepository } from './webhooks.repository';
 
 @Injectable()
 export class WebhooksService {
   constructor(
-    private readonly verifier: StripeWebhookVerifier,
+    @Inject(PAYMENT_PROVIDER)
+    private readonly paymentProvider: PaymentProvider,
     private readonly webhooksRepository: WebhooksRepository,
   ) {}
 
@@ -24,7 +27,7 @@ export class WebhooksService {
     rawBody: Buffer | undefined,
     signature: string | undefined,
   ): Promise<WebhookResponseDto> {
-    if (!this.verifier.isConfigured()) {
+    if (!this.paymentProvider.isConfigured(PaymentProviderCapability.WEBHOOK)) {
       throw new ServiceUnavailableException({
         code: 'WEBHOOK_PROVIDER_NOT_CONFIGURED',
         message: 'Stripe webhook verification is not configured.',
@@ -43,11 +46,11 @@ export class WebhooksService {
     }
 
     try {
-      const event = this.verifier.verify(rawBody, signature);
-      const result = await this.webhooksRepository.processStripeEvent(
-        event,
-        mapStripeWebhookEvent(event),
-      );
+      const event = await this.paymentProvider.verifyWebhook({
+        rawBody,
+        signature,
+      });
+      const result = await this.webhooksRepository.processProviderEvent(event);
 
       if (result.status === WebhookEventStatus.FAILED) {
         throw new BadRequestException({
@@ -58,7 +61,10 @@ export class WebhooksService {
 
       return { received: true, ...result };
     } catch (error: unknown) {
-      if (error instanceof StripeWebhookSignatureError) {
+      if (
+        error instanceof PaymentProviderError &&
+        error.code === 'WEBHOOK_SIGNATURE_INVALID'
+      ) {
         throw this.invalidSignature();
       }
 

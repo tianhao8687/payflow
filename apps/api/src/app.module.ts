@@ -16,6 +16,7 @@ import { RequestIdMiddleware } from './http/request-id.middleware';
 import { OrdersModule } from './orders/orders.module';
 import { PaymentsModule } from './payments/payments.module';
 import { ProductsModule } from './products/products.module';
+import { PaymentProviderModule } from './providers/payment-provider.module';
 import { RefundsModule } from './refunds/refunds.module';
 import { WebhooksModule } from './webhooks/webhooks.module';
 
@@ -28,6 +29,7 @@ import { WebhooksModule } from './webhooks/webhooks.module';
     }),
     ThrottlerModule.forRoot([{ limit: 120, ttl: 60_000 }]),
     DatabaseModule,
+    PaymentProviderModule,
     AdminModule,
     AuthModule,
     HealthModule,

@@ -35,6 +35,7 @@ export class RefundsRepository {
     paymentId: string,
     actorId: string,
     request: CreateRefundRequestDto,
+    provider: PaymentProvider,
   ): Promise<RefundReservation> {
     for (let retry = 0; retry < 3; retry += 1) {
       try {
@@ -90,7 +91,7 @@ export class RefundsRepository {
             }
 
             if (
-              payment.provider !== PaymentProvider.STRIPE ||
+              payment.provider !== provider ||
               !new Set<PaymentStatus>([
                 PaymentStatus.SUCCEEDED,
                 PaymentStatus.PARTIALLY_REFUNDED,

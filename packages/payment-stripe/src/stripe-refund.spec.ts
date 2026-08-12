@@ -1,15 +1,13 @@
-import { ConfigService } from '@nestjs/config';
-import { RefundStatus } from '@payflow/database';
-
-import type { ApiEnvironment } from '../config/environment';
 import {
-  StripeRefundGateway,
-  StripeRefundGatewayError,
-} from './stripe-refund.gateway';
+  PaymentProviderError,
+  ProviderRefundStatus,
+} from '@payflow/payment-core';
 
-describe('StripeRefundGateway', () => {
-  it('sends immutable identifiers and a stable idempotency key to Stripe', async () => {
-    const gateway = createGateway();
+import { StripeProvider } from './stripe.provider';
+
+describe('StripeProvider refund adapter', () => {
+  it('sends immutable identifiers and a stable idempotency key', async () => {
+    const provider = createProvider();
     const create = jest.fn().mockResolvedValue({
       amount: 1200,
       currency: 'usd',
@@ -19,10 +17,10 @@ describe('StripeRefundGateway', () => {
       payment_intent: 'pi_test_unit',
       status: 'succeeded',
     });
-    Reflect.set(gateway, 'stripe', { refunds: { create } });
+    Reflect.set(provider, 'stripe', { refunds: { create } });
 
     await expect(
-      gateway.createRefund({
+      provider.refundPayment({
         amount: 1200,
         idempotencyKey:
           'refund:create:11111111-1111-4111-8111-111111111111:44444444-4444-4444-8444-444444444444',
@@ -39,8 +37,8 @@ describe('StripeRefundGateway', () => {
       failureMessage: null,
       providerPaymentId: 'pi_test_unit',
       providerRefundId: 're_test_unit',
-      requestId: 'req_refund_unit',
-      status: RefundStatus.SUCCEEDED,
+      providerRequestId: 'req_refund_unit',
+      status: ProviderRefundStatus.SUCCEEDED,
     });
 
     expect(create).toHaveBeenCalledWith(
@@ -61,29 +59,13 @@ describe('StripeRefundGateway', () => {
     );
   });
 
-  it('preserves pending provider outcomes and fails closed on unknown status', async () => {
-    const gateway = createGateway();
+  it('preserves pending outcomes and fails closed on unknown status', async () => {
+    const provider = createProvider();
     const create = jest
       .fn()
-      .mockResolvedValueOnce({
-        amount: 1200,
-        currency: 'usd',
-        failure_reason: null,
-        id: 're_pending',
-        lastResponse: { requestId: 'req_pending' },
-        payment_intent: 'pi_test_unit',
-        status: 'pending',
-      })
-      .mockResolvedValueOnce({
-        amount: 1200,
-        currency: 'usd',
-        failure_reason: null,
-        id: 're_unknown',
-        lastResponse: { requestId: 'req_unknown' },
-        payment_intent: 'pi_test_unit',
-        status: 'mystery',
-      });
-    Reflect.set(gateway, 'stripe', { refunds: { create } });
+      .mockResolvedValueOnce(refund('pending', 're_pending', 'req_pending'))
+      .mockResolvedValueOnce(refund('mystery', 're_unknown', 'req_unknown'));
+    Reflect.set(provider, 'stripe', { refunds: { create } });
     const input = {
       amount: 1200,
       idempotencyKey: 'refund:create:payment:request',
@@ -94,22 +76,34 @@ describe('StripeRefundGateway', () => {
       refundRequestId: 'request-id',
     };
 
-    await expect(gateway.createRefund(input)).resolves.toMatchObject({
-      status: RefundStatus.PENDING,
+    await expect(provider.refundPayment(input)).resolves.toMatchObject({
+      status: ProviderRefundStatus.PENDING,
     });
-    await expect(gateway.createRefund(input)).rejects.toMatchObject<
-      Partial<StripeRefundGatewayError>
+    await expect(provider.refundPayment(input)).rejects.toMatchObject<
+      Partial<PaymentProviderError>
     >({
       code: 'STRIPE_REFUND_STATUS_UNKNOWN',
       outcomeUnknown: true,
+      provider: 'STRIPE',
     });
   });
 });
 
-function createGateway(): StripeRefundGateway {
-  const config = {
-    get: jest.fn().mockReturnValue('sk_test_unit_only'),
-  } as unknown as ConfigService<ApiEnvironment, true>;
+function createProvider(): StripeProvider {
+  return new StripeProvider({
+    secretKey: 'sk_test_unit_only',
+    webhookSecret: 'whsec_stage_7_unit',
+  });
+}
 
-  return new StripeRefundGateway(config);
+function refund(status: string, id: string, requestId: string) {
+  return {
+    amount: 1200,
+    currency: 'usd',
+    failure_reason: null,
+    id,
+    lastResponse: { requestId },
+    payment_intent: 'pi_test_unit',
+    status,
+  };
 }
