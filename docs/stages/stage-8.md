@@ -133,6 +133,7 @@ database migration deploy/status            PASS (9 migrations, up to date)
 Next.js/NestJS/worker/package builds         PASS
 desktop + 390px browser QA                  PASS
 real Stripe Test hosted Checkout            PASS (API 2026-07-29.dahlia)
+GitHub Actions                              PASS (run 31630772726, 2m 46s)
 ```
 
 ## 9. Acceptance checklist
@@ -147,9 +148,10 @@ real Stripe Test hosted Checkout            PASS (API 2026-07-29.dahlia)
 - [x] No Stage 9 outbox, ledger, or reconciliation was introduced early.
 - [x] Full local static, unit, database E2E, migration, and build gate passes.
 - [ ] Real external PayPal Sandbox create/approve/capture path passes.
-- [ ] GitHub Actions passes the committed Stage 8 implementation.
+- [x] GitHub Actions passes the committed Stage 8 implementation (run
+      `31630772726`).
 
 ## 10. Phase gate
 
-Stage 8 is not yet accepted. Stage 9 must not start until the two unchecked
-items above are satisfied and the final evidence is committed.
+Stage 8 is not yet accepted. Stage 9 must not start until the remaining real
+PayPal Sandbox item is satisfied and the final evidence is committed.
