@@ -3,6 +3,9 @@ import { ApiProperty } from '@nestjs/swagger';
 class HealthChecksDto {
   @ApiProperty({ example: 'up' })
   database!: 'up';
+
+  @ApiProperty({ example: 'up' })
+  redis!: 'up';
 }
 
 export class HealthResponseDto {

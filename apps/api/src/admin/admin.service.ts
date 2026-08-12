@@ -1,6 +1,8 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { RefundStatus, type Refund } from '@payflow/database';
 
+import { WebhookQueueService } from '../queue/webhook-queue.service';
+
 import {
   AdminRepository,
   type AdminPaymentDetailRecord,
@@ -27,11 +29,15 @@ import {
   AdminRefundsResponseDto,
   AdminWebhookItemDto,
   AdminWebhooksResponseDto,
+  AdminWebhookQueueResponseDto,
 } from './dto/admin-response.dto';
 
 @Injectable()
 export class AdminService {
-  constructor(private readonly adminRepository: AdminRepository) {}
+  constructor(
+    private readonly adminRepository: AdminRepository,
+    private readonly webhookQueue: WebhookQueueService,
+  ) {}
 
   async dashboard(): Promise<AdminDashboardResponseDto> {
     const dashboard = await this.adminRepository.dashboard();
@@ -150,12 +156,19 @@ export class AdminService {
         lastReceivedAt: event.lastReceivedAt.toISOString(),
         processedAt: event.processedAt?.toISOString() ?? null,
         processingError: event.processingError,
+        processingAttempts: event.processingAttempts,
         provider: event.provider,
         providerEventId: event.providerEventId,
         receivedAt: event.receivedAt.toISOString(),
+        queueJobId: event.queueJobId,
+        queuedAt: event.queuedAt?.toISOString() ?? null,
         status: event.status,
       })),
     };
+  }
+
+  webhookQueueSnapshot(): Promise<AdminWebhookQueueResponseDto> {
+    return this.webhookQueue.snapshot(50);
   }
 
   async auditLogs(

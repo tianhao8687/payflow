@@ -20,6 +20,7 @@ import { RefundsService } from './refunds.service';
 describe('RefundsService', () => {
   let repository: {
     applyProviderResult: jest.Mock;
+    findPaymentProvider: jest.Mock;
     recordProviderFailure: jest.Mock;
     reserve: jest.Mock;
   };
@@ -35,6 +36,7 @@ describe('RefundsService', () => {
       applyProviderResult: jest.fn(),
       recordProviderFailure: jest.fn(),
       reserve: jest.fn(),
+      findPaymentProvider: jest.fn().mockResolvedValue(PaymentProvider.STRIPE),
     };
     provider = {
       isConfigured: jest.fn().mockReturnValue(true),
@@ -82,6 +84,7 @@ describe('RefundsService', () => {
     });
     expect(provider.refundPayment).toHaveBeenCalledWith({
       amount: 1200,
+      currency: 'USD',
       idempotencyKey: pending.idempotencyKey,
       orderId: pending.payment.orderId,
       paymentId: pending.paymentId,

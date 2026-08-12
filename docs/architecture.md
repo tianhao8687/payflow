@@ -1,10 +1,12 @@
 # PayFlow architecture
 
-## Current boundary: Stage 7 accepted
+## Current boundary: Stage 8 under acceptance
 
-Stage 7 moves every production Stripe SDK interaction behind a provider-neutral
-contract while preserving the Stage 6 reliability gates. The modular-monolith
-deployment and core domain model remain unchanged.
+Stage 8 adds a PayPal Sandbox adapter and an asynchronous BullMQ webhook worker
+without changing the locked Order, Payment, Refund, or WebhookEvent domain
+model. The NestJS API remains the sole HTTP/business authorization boundary;
+the worker is a separate process that reuses the same provider-neutral domain
+package and PostgreSQL source of truth.
 
 ```mermaid
 flowchart TB
@@ -15,7 +17,7 @@ flowchart TB
     AdminUI[Admin operations console]
   end
 
-  subgraph ModularMonolith[NestJS modular monolith]
+  subgraph API[NestJS modular monolith API]
     Auth[Auth module]
     Users[Users repository]
     Products[Products module]
@@ -30,10 +32,16 @@ flowchart TB
     DatabaseModule[Database module]
   end
 
-  subgraph ProviderPackages[In-process provider packages]
+  subgraph ProviderPackages[Provider packages]
     PaymentCore[payment-core contract]
     StripeProvider[payment-stripe adapter]
+    PayPalProvider[payment-paypal adapter]
+    PaymentDomain[payment-domain state projection]
+    PaymentQueue[payment-queue BullMQ boundary]
   end
+
+  Worker[Standalone webhook worker]
+  Redis[(Redis / BullMQ)]
 
   subgraph Data
     Prisma[Prisma client boundary]
@@ -58,11 +66,20 @@ flowchart TB
   Refunds --> PaymentCore
   Webhooks --> PaymentCore
   ProviderComposition --> StripeProvider
+  ProviderComposition --> PayPalProvider
   PaymentCore -. implemented by .-> StripeProvider
+  PaymentCore -. implemented by .-> PayPalProvider
   StripeProvider --> Stripe[Stripe Test hosted Checkout]
+  PayPalProvider --> PayPal[PayPal Sandbox Orders v2]
   Stripe -->|raw Event + signature| Webhooks
-  Webhooks --> DatabaseModule
-  Webhooks --> Refunds
+  PayPal -->|raw Event + verification headers| Webhooks
+  Webhooks -->|verify + durable receive| DatabaseModule
+  Webhooks -->|enqueue event UUID| PaymentQueue --> Redis
+  Redis --> Worker
+  Worker --> PaymentDomain
+  Worker --> StripeProvider
+  Worker --> PayPalProvider
+  PaymentDomain --> DatabaseModule
   Refunds --> DatabaseModule
   Admin --> DatabaseModule
   Users --> DatabaseModule
@@ -79,8 +96,8 @@ flowchart TB
   access.
 - Integer minor units for money fields; floating-point money is forbidden.
 - Order and Payment remain separate domain objects when their stages arrive.
-- The application remains a modular monolith. Provider packages are in-process
-  boundaries; worker/queue deployment remains deferred to its specified stage.
+- The business API remains a modular monolith. Provider/domain packages are
+  shared code boundaries, and the Stage 8 worker is the only separate runtime.
 
 ## Stage 1 identity boundary
 
@@ -215,7 +232,32 @@ flowchart TB
   Stripe Event types no longer cross into business state or persistence code.
 - Scoped ESLint `no-restricted-imports` rules reject direct `stripe` imports in
   API production code and direct adapter imports outside the composition root.
-- PayPal selection, Redis/BullMQ, and Worker processing remain Stage 8 scope.
+- Stage 8 extends this boundary; Stage 7's adapter isolation remains enforced.
+
+## Stage 8 PayPal and queue boundary
+
+- `PaymentProviderRegistry` selects Stripe or PayPal by the requested and then
+  persisted provider identity. Payments and refunds keep one provider-neutral
+  business interface; switching providers never changes Order or Refund rules.
+- `@payflow/payment-paypal` uses PayPal Sandbox Orders v2, OAuth client
+  credentials, capture/refund endpoints, `PayPal-Request-Id` idempotency, and
+  PayPal's verification endpoint. It converts decimal provider amounts to exact
+  integer minor units before domain code sees them.
+- Both public webhook routes verify the exact raw body before persistence.
+  Valid events are deduplicated in PostgreSQL, enqueued by WebhookEvent UUID,
+  and acknowledged without waiting for business-state processing.
+- `apps/worker` consumes `payflow-webhooks` jobs. Transient network, rate-limit,
+  and provider 5xx failures retry at most five times with exponential backoff;
+  deterministic integrity/state-machine failures use BullMQ's unrecoverable
+  path and are not blindly retried.
+- PostgreSQL records receive time, queue job ID, attempt count, last processing
+  start, terminal result, and a bounded safe error. Redis is transport and
+  operational telemetry, never the authoritative payment ledger.
+- `GET /admin/queues/webhooks` exposes waiting, active, delayed, completed, and
+  failed jobs plus attempt counts. Failed jobs are retained for seven days (up
+  to 2,000) as the Stage 8 dead-letter/operations surface.
+- A partial unique index permits at most one successful/refunded Payment per
+  Order across all providers.
 
 ## Data boundary
 
@@ -231,24 +273,26 @@ emails, nonnegative money/stock, positive item quantities, arithmetic equality,
 and uppercase three-letter currency. `refunds` stores request/provider identity,
 integer amount, lifecycle, reason, and provider failure details. `audit_logs`
 stores administrator/system actor, action, target, JSON metadata, and timestamp.
-`webhook_events` stores the original verified Event JSON, provider ID/type,
-delivery count, processing state/error, and receive/process timestamps; none of
-these tables store card numbers or CVC data added by PayFlow.
+`webhook_events` stores the original verified Event JSON, normalized action,
+provider ID/type, delivery count, queue job ID, processing attempt count,
+provider/receive/queue/process timestamps, and a bounded safe processing error;
+none of these tables store card numbers or CVC data added by PayFlow.
 
 ## Runtime topology
 
-Docker Compose starts three services:
+Docker Compose starts five services:
 
 1. `postgres` owns persistent local database data.
-2. `api` applies committed migrations, runs the idempotent admin/product seed,
+2. `redis` persists BullMQ state with AOF enabled.
+3. `api` applies committed migrations, runs the idempotent admin/product seed,
    then serves REST, health, and Swagger.
-3. `web` serves the responsive catalog and browser-based auth surfaces.
+4. `worker` consumes verified webhook-event jobs and updates PostgreSQL.
+5. `web` serves the responsive catalog and browser-based auth surfaces.
 
 The API validates environment variables at startup. Request IDs and the shared
 `code`, `message`, `requestId`, and `details` error envelope remain in force.
 
 ## Deferred boundaries
 
-- PayPal, `apps/worker`, Redis, and BullMQ — Stage 8.
 - Outbox, ledger, and reconciliation — Stage 9.
 - OpenTelemetry and portfolio packaging — Stage 10.

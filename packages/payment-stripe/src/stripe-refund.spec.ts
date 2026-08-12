@@ -22,6 +22,7 @@ describe('StripeProvider refund adapter', () => {
     await expect(
       provider.refundPayment({
         amount: 1200,
+        currency: 'USD',
         idempotencyKey:
           'refund:create:11111111-1111-4111-8111-111111111111:44444444-4444-4444-8444-444444444444',
         orderId: '22222222-2222-4222-8222-222222222222',
@@ -68,6 +69,7 @@ describe('StripeProvider refund adapter', () => {
     Reflect.set(provider, 'stripe', { refunds: { create } });
     const input = {
       amount: 1200,
+      currency: 'USD',
       idempotencyKey: 'refund:create:payment:request',
       orderId: 'order-id',
       paymentId: 'payment-id',

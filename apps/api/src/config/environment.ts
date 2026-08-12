@@ -6,7 +6,12 @@ export interface ApiEnvironment {
   JWT_EXPIRES_IN_SECONDS: number;
   JWT_SECRET: string;
   NODE_ENV: NodeEnvironment;
+  PAYPAL_CLIENT_ID: string;
+  PAYPAL_CLIENT_SECRET: string;
+  PAYPAL_ENV: 'sandbox';
+  PAYPAL_WEBHOOK_ID: string;
   PORT: number;
+  REDIS_URL: string;
   STRIPE_SECRET_KEY: string;
   STRIPE_WEBHOOK_SECRET: string;
 }
@@ -32,6 +37,11 @@ export function validateEnvironment(
   const jwtExpiresInSeconds = Number(values.JWT_EXPIRES_IN_SECONDS ?? 900);
   const stripeSecretKey = readString(values, 'STRIPE_SECRET_KEY', '');
   const stripeWebhookSecret = readString(values, 'STRIPE_WEBHOOK_SECRET', '');
+  const redisUrl = readString(values, 'REDIS_URL', 'redis://localhost:6379');
+  const paypalClientId = readString(values, 'PAYPAL_CLIENT_ID', '');
+  const paypalClientSecret = readString(values, 'PAYPAL_CLIENT_SECRET', '');
+  const paypalWebhookId = readString(values, 'PAYPAL_WEBHOOK_ID', '');
+  const paypalEnvironment = readString(values, 'PAYPAL_ENV', 'sandbox');
 
   if (!allowedNodeEnvironments.has(nodeEnvironment as NodeEnvironment)) {
     throw new Error(
@@ -77,6 +87,19 @@ export function validateEnvironment(
     );
   }
 
+  if (paypalEnvironment !== 'sandbox') {
+    throw new Error('PAYPAL_ENV must be sandbox; live mode is forbidden.');
+  }
+
+  try {
+    const parsedRedisUrl = new URL(redisUrl);
+    if (!new Set(['redis:', 'rediss:']).has(parsedRedisUrl.protocol)) {
+      throw new Error('unsupported protocol');
+    }
+  } catch {
+    throw new Error('REDIS_URL must be a redis:// or rediss:// URL.');
+  }
+
   try {
     new URL(appBaseUrl);
   } catch {
@@ -90,7 +113,12 @@ export function validateEnvironment(
     JWT_EXPIRES_IN_SECONDS: jwtExpiresInSeconds,
     JWT_SECRET: jwtSecret,
     NODE_ENV: nodeEnvironment as NodeEnvironment,
+    PAYPAL_CLIENT_ID: paypalClientId,
+    PAYPAL_CLIENT_SECRET: paypalClientSecret,
+    PAYPAL_ENV: 'sandbox',
+    PAYPAL_WEBHOOK_ID: paypalWebhookId,
     PORT: port,
+    REDIS_URL: redisUrl,
     STRIPE_SECRET_KEY: stripeSecretKey,
     STRIPE_WEBHOOK_SECRET: stripeWebhookSecret,
   };

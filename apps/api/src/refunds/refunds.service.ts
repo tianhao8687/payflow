@@ -11,10 +11,11 @@ import {
   RefundStatus,
 } from '@payflow/database';
 import {
-  PAYMENT_PROVIDER,
+  PAYMENT_PROVIDER_REGISTRY,
   type PaymentProvider,
   PaymentProviderCapability,
   PaymentProviderError,
+  PaymentProviderRegistry,
   ProviderRefundStatus,
 } from '@payflow/payment-core';
 
@@ -32,8 +33,8 @@ import {
 export class RefundsService {
   constructor(
     private readonly refundsRepository: RefundsRepository,
-    @Inject(PAYMENT_PROVIDER)
-    private readonly paymentProvider: PaymentProvider,
+    @Inject(PAYMENT_PROVIDER_REGISTRY)
+    private readonly providers: PaymentProviderRegistry | PaymentProvider,
   ) {}
 
   async create(
@@ -41,9 +42,28 @@ export class RefundsService {
     actorId: string,
     request: CreateRefundRequestDto,
   ): Promise<CreateRefundResponseDto> {
-    if (!this.paymentProvider.isConfigured(PaymentProviderCapability.REFUND)) {
+    const providerName =
+      await this.refundsRepository.findPaymentProvider(paymentId);
+    if (!providerName) {
+      throw new NotFoundException({
+        code: 'PAYMENT_NOT_FOUND',
+        message: 'Payment not found.',
+      });
+    }
+    const paymentProvider = this.providerFor(providerName);
+
+    if (!paymentProvider) {
+      throw new ServiceUnavailableException({
+        code: 'REFUND_PROVIDER_UNSUPPORTED',
+        details: { provider: providerName },
+        message: 'The payment provider is not enabled locally.',
+      });
+    }
+
+    if (!paymentProvider.isConfigured(PaymentProviderCapability.REFUND)) {
       throw new ServiceUnavailableException({
         code: 'REFUND_PROVIDER_NOT_CONFIGURED',
+        details: { provider: providerName },
         message: 'The sandbox payment provider is not configured for refunds.',
       });
     }
@@ -52,7 +72,7 @@ export class RefundsService {
       paymentId,
       actorId,
       request,
-      this.databaseProvider(),
+      providerName,
     );
 
     if (reservation.kind === 'NOT_FOUND') {
@@ -98,8 +118,9 @@ export class RefundsService {
     const refund = reservation.refund;
 
     try {
-      const result = await this.paymentProvider.refundPayment({
+      const result = await paymentProvider.refundPayment({
         amount: refund.amount,
+        currency: refund.payment.currency,
         idempotencyKey: refund.idempotencyKey,
         orderId: refund.payment.orderId,
         paymentId: refund.paymentId,
@@ -138,7 +159,7 @@ export class RefundsService {
           ? 'REFUND_PROVIDER_OUTCOME_UNKNOWN'
           : 'REFUND_PROVIDER_ERROR',
         details: {
-          provider: this.paymentProvider.name,
+          provider: paymentProvider.name,
           providerCode: failure.code,
           retryWithSameRefundRequestId: failure.outcomeUnknown,
         },
@@ -188,16 +209,14 @@ export class RefundsService {
     };
   }
 
-  private databaseProvider(): DatabasePaymentProvider {
-    if (this.paymentProvider.name === DatabasePaymentProvider.STRIPE) {
-      return DatabasePaymentProvider.STRIPE;
+  private providerFor(
+    name: DatabasePaymentProvider,
+  ): PaymentProvider | undefined {
+    if (this.providers instanceof PaymentProviderRegistry) {
+      return this.providers.get(name);
     }
 
-    throw new ServiceUnavailableException({
-      code: 'PAYMENT_PROVIDER_UNSUPPORTED',
-      details: { provider: this.paymentProvider.name },
-      message: 'The configured payment provider is not enabled locally.',
-    });
+    return this.providers.name === name ? this.providers : undefined;
   }
 
   private localRefundStatus(status: ProviderRefundStatus): RefundStatus {

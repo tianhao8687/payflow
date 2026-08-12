@@ -6,10 +6,11 @@ import {
 } from '@nestjs/common';
 import { WebhookEventStatus } from '@payflow/database';
 import {
-  PAYMENT_PROVIDER,
+  PAYMENT_PROVIDER_REGISTRY,
   type PaymentProvider,
   PaymentProviderCapability,
   PaymentProviderError,
+  PaymentProviderRegistry,
 } from '@payflow/payment-core';
 
 import { WebhookResponseDto } from './dto/webhook-response.dto';
@@ -18,19 +19,41 @@ import { WebhooksRepository } from './webhooks.repository';
 @Injectable()
 export class WebhooksService {
   constructor(
-    @Inject(PAYMENT_PROVIDER)
-    private readonly paymentProvider: PaymentProvider,
+    @Inject(PAYMENT_PROVIDER_REGISTRY)
+    private readonly providers: PaymentProviderRegistry | PaymentProvider,
     private readonly webhooksRepository: WebhooksRepository,
   ) {}
 
-  async handleStripe(
+  handleStripe(
     rawBody: Buffer | undefined,
     signature: string | undefined,
   ): Promise<WebhookResponseDto> {
-    if (!this.paymentProvider.isConfigured(PaymentProviderCapability.WEBHOOK)) {
+    return this.handle('STRIPE', rawBody, signature, {});
+  }
+
+  handlePayPal(
+    rawBody: Buffer | undefined,
+    signature: string | undefined,
+    headers: Readonly<Record<string, string | undefined>>,
+  ): Promise<WebhookResponseDto> {
+    return this.handle('PAYPAL', rawBody, signature, headers);
+  }
+
+  private async handle(
+    providerName: string,
+    rawBody: Buffer | undefined,
+    signature: string | undefined,
+    headers: Readonly<Record<string, string | undefined>>,
+  ): Promise<WebhookResponseDto> {
+    const provider = this.providerFor(providerName);
+    if (
+      !provider ||
+      !provider.isConfigured(PaymentProviderCapability.WEBHOOK)
+    ) {
       throw new ServiceUnavailableException({
         code: 'WEBHOOK_PROVIDER_NOT_CONFIGURED',
-        message: 'Stripe webhook verification is not configured.',
+        details: { provider: providerName },
+        message: `${providerName} webhook verification is not configured.`,
       });
     }
 
@@ -40,13 +63,13 @@ export class WebhooksService {
         message: 'The unmodified request body is required.',
       });
     }
-
     if (!signature) {
-      throw this.invalidSignature();
+      throw this.invalidSignature(providerName);
     }
 
     try {
-      const event = await this.paymentProvider.verifyWebhook({
+      const event = await provider.verifyWebhook({
+        headers,
         rawBody,
         signature,
       });
@@ -55,7 +78,7 @@ export class WebhooksService {
       if (result.status === WebhookEventStatus.FAILED) {
         throw new BadRequestException({
           code: 'WEBHOOK_EVENT_REJECTED',
-          message: 'The signed Stripe event failed local integrity checks.',
+          message: `The signed ${providerName} event failed local integrity checks.`,
         });
       }
 
@@ -65,17 +88,24 @@ export class WebhooksService {
         error instanceof PaymentProviderError &&
         error.code === 'WEBHOOK_SIGNATURE_INVALID'
       ) {
-        throw this.invalidSignature();
+        throw this.invalidSignature(providerName);
       }
-
       throw error;
     }
   }
 
-  private invalidSignature(): BadRequestException {
+  private providerFor(name: string): PaymentProvider | undefined {
+    if (this.providers instanceof PaymentProviderRegistry) {
+      return this.providers.get(name);
+    }
+    return this.providers.name === name ? this.providers : undefined;
+  }
+
+  private invalidSignature(provider: string): BadRequestException {
     return new BadRequestException({
       code: 'WEBHOOK_SIGNATURE_INVALID',
-      message: 'Stripe webhook signature verification failed.',
+      details: { provider },
+      message: `${provider} webhook signature verification failed.`,
     });
   }
 }

@@ -14,6 +14,7 @@ export class PaymentProviderError extends Error {
     message: string,
     readonly requestId: string | null = null,
     readonly outcomeUnknown = false,
+    readonly retryable = false,
   ) {
     super(message);
     this.name = 'PaymentProviderError';

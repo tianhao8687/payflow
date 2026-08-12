@@ -24,6 +24,7 @@ enum OrderStatus {
 
 enum PaymentProvider {
   STRIPE
+  PAYPAL
 }
 
 enum PaymentStatus {
@@ -163,21 +164,29 @@ model PaymentAttempt {
 }
 
 model WebhookEvent {
-  id              String             @id @default(uuid()) @db.Uuid
-  provider        PaymentProvider
-  providerEventId String             @unique @map("provider_event_id") @db.VarChar(255)
-  eventType       String             @map("event_type") @db.VarChar(255)
-  payloadJson     Json               @map("payload_json") @db.JsonB
-  status          WebhookEventStatus @default(RECEIVED)
-  deliveryCount   Int                @default(1) @map("delivery_count")
-  processingError String?            @map("processing_error") @db.VarChar(500)
-  receivedAt      DateTime           @default(now()) @map("received_at") @db.Timestamptz(3)
-  lastReceivedAt  DateTime           @default(now()) @map("last_received_at") @db.Timestamptz(3)
-  processedAt     DateTime?          @map("processed_at") @db.Timestamptz(3)
+  id                      String             @id @default(uuid()) @db.Uuid
+  provider                PaymentProvider
+  providerEventId         String             @map("provider_event_id") @db.VarChar(255)
+  eventType               String             @map("event_type") @db.VarChar(255)
+  payloadJson             Json               @map("payload_json") @db.JsonB
+  actionJson              Json?              @map("action_json") @db.JsonB
+  status                  WebhookEventStatus @default(RECEIVED)
+  deliveryCount           Int                @default(1) @map("delivery_count")
+  processingAttempts      Int                @default(0) @map("processing_attempts")
+  processingError         String?            @map("processing_error") @db.VarChar(500)
+  queueJobId              String?            @map("queue_job_id") @db.VarChar(255)
+  receivedAt              DateTime           @default(now()) @map("received_at") @db.Timestamptz(3)
+  lastReceivedAt          DateTime           @default(now()) @map("last_received_at") @db.Timestamptz(3)
+  providerOccurredAt      DateTime?          @map("provider_occurred_at") @db.Timestamptz(3)
+  queuedAt                DateTime?          @map("queued_at") @db.Timestamptz(3)
+  lastProcessingStartedAt DateTime?          @map("last_processing_started_at") @db.Timestamptz(3)
+  processedAt             DateTime?          @map("processed_at") @db.Timestamptz(3)
 
   @@index([provider, receivedAt])
+  @@unique([provider, providerEventId])
   @@index([status, receivedAt])
   @@index([eventType, receivedAt])
+  @@index([queueJobId])
   @@map("webhook_events")
 }
 

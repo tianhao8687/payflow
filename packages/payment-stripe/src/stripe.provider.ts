@@ -21,6 +21,9 @@ import Stripe from 'stripe';
 
 import { mapStripeWebhookEvent } from './stripe-webhook.mapper';
 
+const STRIPE_API_VERSION = '2026-07-29.dahlia' as const;
+const STRIPE_CHECKOUT_INTEGRATION_IDENTIFIER = 'payflow_qxnmjvra';
+
 export interface StripeProviderOptions {
   appName?: string;
   appVersion?: string;
@@ -40,11 +43,12 @@ export class StripeProvider implements PaymentProvider {
     this.paymentConfigured = options.secretKey.length > 0;
     this.webhookSecret = options.webhookSecret;
     this.stripe = new Stripe(
-      options.secretKey || 'sk_test_payflow_webhook_verification_only',
+      options.secretKey || 'payflow_test_key_unconfigured',
       {
+        apiVersion: STRIPE_API_VERSION,
         appInfo: {
           name: options.appName ?? 'PayFlow',
-          version: options.appVersion ?? '0.7.0',
+          version: options.appVersion ?? '0.8.0',
         },
         maxNetworkRetries: options.maxNetworkRetries ?? 2,
         telemetry: false,
@@ -67,6 +71,7 @@ export class StripeProvider implements PaymentProvider {
         {
           cancel_url: input.cancelUrl,
           client_reference_id: input.orderId,
+          integration_identifier: STRIPE_CHECKOUT_INTEGRATION_IDENTIFIER,
           line_items: input.lines.map((line) => ({
             price_data: {
               currency: input.currency.toLowerCase(),
@@ -356,6 +361,7 @@ export class StripeProvider implements PaymentProvider {
         error.message,
         error.requestId ?? null,
         mutation && this.isOutcomeUnknown(error.type),
+        this.isOutcomeUnknown(error.type),
       );
     }
 

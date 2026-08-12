@@ -2,46 +2,44 @@
 
 ## Boundary
 
-Stage 7 separates provider-neutral payment orchestration from Stripe transport
-details without changing the modular-monolith deployment or the persisted
-Order, Payment, Refund, WebhookEvent, and AuditLog model.
+Stage 7 separated provider-neutral orchestration from Stripe transport. Stage 8
+adds PayPal Sandbox and runtime selection without changing the persisted Order,
+Payment, Refund, WebhookEvent, and AuditLog domain model.
 
 ```text
-NestJS Payments / Refunds / Webhooks services
+NestJS Payments / Refunds / Webhooks + Worker
                     |
                     v
         @payflow/payment-core
-        PaymentProvider contract
-                    ^
-                    |
-        @payflow/payment-stripe
-        StripeProvider implementation
-                    |
-                    v
-             Stripe Test SDK
+        PaymentProviderRegistry
+             /              \
+            v                v
+ @payflow/payment-stripe  @payflow/payment-paypal
+       Stripe Test           PayPal Sandbox
 ```
 
 `payment-core` has no dependency on NestJS, Prisma, the database package, or a
-provider SDK. `payment-stripe` has no dependency on NestJS or PayFlow database
-types. The API composition module is the only production file allowed to know
-which implementation is bound to the core injection token.
+provider SDK. Both provider adapters have no dependency on NestJS or PayFlow
+database types. The API composition module and standalone worker bootstrap are
+the only production composition roots allowed to construct adapters.
 
 ## Contract
 
-| Method            | Provider-neutral responsibility                                                                                                     | Stripe mapping                                    |
-| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------- |
-| `createPayment`   | Create a payment entry point from integer amount, currency, immutable lines, local identifiers, URLs, and a stable idempotency key. | Hosted Checkout Session creation.                 |
-| `getPayment`      | Read a current normalized provider payment snapshot.                                                                                | `paymentIntents.retrieve`.                        |
-| `capturePayment?` | Optionally capture an authorized payment with a stable key.                                                                         | `paymentIntents.capture`.                         |
-| `cancelPayment?`  | Optionally cancel a provider payment with a stable key.                                                                             | `paymentIntents.cancel`.                          |
-| `refundPayment`   | Submit a full/partial refund with immutable local metadata and a stable key.                                                        | Refund creation against a PaymentIntent.          |
-| `verifyWebhook`   | Verify exact request bytes and return a normalized event/action.                                                                    | Stripe signature verification plus Event mapping. |
+| Method            | Stripe Test mapping                        | PayPal Sandbox mapping                         |
+| ----------------- | ------------------------------------------ | ---------------------------------------------- |
+| `createPayment`   | Hosted Checkout Session                    | Orders v2 create + approval URL                |
+| `getPayment`      | `paymentIntents.retrieve`                  | Order/capture lookup                           |
+| `capturePayment?` | `paymentIntents.capture`                   | Capture approved Order                         |
+| `cancelPayment?`  | `paymentIntents.cancel`                    | Normalize an uncaptured Order as locally ended |
+| `refundPayment`   | Refund against a PaymentIntent             | Refund against a capture                       |
+| `verifyWebhook`   | Exact-byte signature verification + mapper | Official verification endpoint + mapper        |
 
 Stable idempotency keys remain business inputs:
 
 ```text
-payment:create:{orderId}:{attemptNo}
+payment:create:{provider}:{orderId}:{attemptNo}
 refund:create:{paymentId}:{refundRequestId}
+payment:capture:{paymentId}
 ```
 
 The adapter must never generate a random replacement for either key.
@@ -80,17 +78,18 @@ normalized event may change local state.
   references, and normalized target status; or
 - `REFUND_SYNC` with local/provider identifiers and normalized refund state.
 
-The Webhooks repository no longer imports Stripe types. It maps the normalized
-status to the persisted enum, then applies the same advisory locks, transaction,
-deduplication constraint, integrity checks, and explicit domain transitions as
-before Stage 7.
+The HTTP Webhooks repository imports no provider types. It persists the
+normalized action and enqueues a database event UUID. `payment-domain` later
+applies advisory locks, integrity checks, and explicit transitions in the
+worker.
 
 ## Error contract
 
 `PaymentProviderError` carries provider, operation, provider code, safe message,
-request ID, and `outcomeUnknown`. Business services use this contract for
-provider-attempt audit and safe same-key retry behavior. SDK error classes do
-not cross the adapter boundary.
+request ID, `outcomeUnknown`, and `retryable`. Business services use the first
+flag for safe same-key mutation retry; the worker uses the second to distinguish
+transient BullMQ retry from deterministic permanent failure. SDK error classes
+do not cross the adapter boundary.
 
 Network, provider 5xx, rate-limit, and provider-idempotency transport failures
 may have unknown mutation outcomes. Deterministic provider validation/rejection
@@ -100,10 +99,12 @@ outcome-unknown.
 ## Dependency enforcement
 
 - API production source cannot import `stripe`.
-- API business source cannot import `@payflow/payment-stripe`; only
-  `src/providers/payment-provider.module.ts` is the composition root.
+- API business source cannot import either provider adapter; only
+  `src/providers/payment-provider.module.ts` is the API composition root.
 - `@payflow/payment-core` cannot import `stripe`.
-- Scoped ESLint `no-restricted-imports` rules enforce all three constraints in
+- The worker bootstrap is explicitly permitted to construct both adapters;
+  its runtime processor depends on the core registry and payment-domain.
+- Scoped ESLint `no-restricted-imports` rules enforce these constraints in
   local and GitHub Actions lint gates.
 
 ## Verification
@@ -114,16 +115,13 @@ pnpm --filter @payflow/payment-core typecheck
 pnpm --filter @payflow/payment-stripe lint
 pnpm --filter @payflow/payment-stripe typecheck
 pnpm --filter @payflow/payment-stripe test
-pnpm test:e2e
+pnpm --filter @payflow/payment-paypal test
+pnpm --filter @payflow/payment-queue test
+pnpm test:stage-8
 ```
 
-Adapter tests cover hosted Checkout field/key mapping, PaymentIntent lookup,
-capture/cancel status normalization, refund metadata/key mapping, pending and
-unknown refund outcomes, exact-byte signature verification, live-mode rejection,
-current Refund events, audit-only `charge.refunded`, and unknown events.
-
-## Deferred to Stage 8
-
-This stage deliberately does not add PayPal, a runtime provider selector,
-Redis, BullMQ, `apps/worker`, asynchronous webhook jobs, or retry dashboards.
-Those changes require their own schema/runtime and acceptance gate.
+Adapter tests cover hosted Checkout and PayPal Order field/key mapping,
+PaymentIntent/PayPal lookup and capture, refund normalization, exact-byte
+signature verification, provider webhook mapping, decimal/minor-unit conversion,
+and transient/permanent error classification. Stage 8 E2E covers the shared
+business interface and observable worker retry against real PostgreSQL/Redis.

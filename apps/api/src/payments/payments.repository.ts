@@ -73,15 +73,21 @@ export class PaymentsRepository {
               return { created: false, order, payment: null };
             }
 
-            const latest = await transaction.payment.findFirst({
-              where: { orderId, provider },
+            const active = await transaction.payment.findFirst({
+              where: { orderId, status: { not: PaymentStatus.FAILED } },
               orderBy: { attemptNo: 'desc' },
               include: withAttemptCount,
             });
 
-            if (latest && latest.status !== PaymentStatus.FAILED) {
-              return { created: false, order, payment: latest };
+            if (active) {
+              return { created: false, order, payment: active };
             }
+
+            const latest = await transaction.payment.findFirst({
+              where: { orderId, provider },
+              orderBy: { attemptNo: 'desc' },
+              select: { attemptNo: true },
+            });
 
             const attemptNo = (latest?.attemptNo ?? 0) + 1;
             const payment = await transaction.payment.create({
@@ -89,7 +95,7 @@ export class PaymentsRepository {
                 amount: order.totalAmount,
                 attemptNo,
                 currency: order.currency,
-                idempotencyKey: `payment:create:${order.id}:${attemptNo}`,
+                idempotencyKey: `payment:create:${provider.toLowerCase()}:${order.id}:${attemptNo}`,
                 orderId: order.id,
                 provider,
                 status: PaymentStatus.CREATED,
@@ -142,7 +148,7 @@ export class PaymentsRepository {
         current.providerCheckoutSessionId !== data.providerCheckoutSessionId
       ) {
         throw new Error(
-          'Stripe idempotency replay returned a different Checkout Session.',
+          'Provider idempotency replay returned a different Checkout Session.',
         );
       }
 

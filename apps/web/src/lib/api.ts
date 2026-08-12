@@ -40,7 +40,7 @@ export type OrderStatus =
   | 'PARTIALLY_REFUNDED'
   | 'REFUNDED';
 
-export type PaymentProvider = 'STRIPE';
+export type PaymentProvider = 'PAYPAL' | 'STRIPE';
 export type PaymentStatus =
   | 'CREATED'
   | 'PENDING'
@@ -223,10 +223,30 @@ export interface AdminWebhook {
   eventType: string;
   status: 'RECEIVED' | 'PROCESSED' | 'IGNORED' | 'FAILED';
   deliveryCount: number;
+  processingAttempts: number;
+  queueJobId: string | null;
+  queuedAt: string | null;
   processingError: string | null;
   receivedAt: string;
   lastReceivedAt: string;
   processedAt: string | null;
+}
+
+export interface AdminWebhookQueueJob {
+  id: string;
+  webhookEventId: string;
+  state: string;
+  attemptsMade: number;
+  attemptsTotal: number;
+  failedReason: string | null;
+  timestamp: string;
+  processedAt: string | null;
+  finishedAt: string | null;
+}
+
+export interface AdminWebhookQueue {
+  counts: Record<string, number>;
+  jobs: AdminWebhookQueueJob[];
 }
 
 export interface AdminAuditLog {

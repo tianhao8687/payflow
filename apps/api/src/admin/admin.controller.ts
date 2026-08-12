@@ -26,6 +26,7 @@ import {
   AdminPaymentsResponseDto,
   AdminRefundsResponseDto,
   AdminWebhooksResponseDto,
+  AdminWebhookQueueResponseDto,
 } from './dto/admin-response.dto';
 
 @ApiBearerAuth()
@@ -98,6 +99,15 @@ export class AdminController {
     @Query() query: AdminWebhooksQueryDto,
   ): Promise<AdminWebhooksResponseDto> {
     return this.adminService.webhooks(query);
+  }
+
+  @Get('queues/webhooks')
+  @ApiOperation({
+    summary: 'Inspect BullMQ webhook retries and final failures',
+  })
+  @ApiOkResponse({ type: AdminWebhookQueueResponseDto })
+  webhookQueue(): Promise<AdminWebhookQueueResponseDto> {
+    return this.adminService.webhookQueueSnapshot();
   }
 
   @Get('audit-logs')

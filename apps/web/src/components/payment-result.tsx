@@ -250,7 +250,7 @@ function getResultView(payment: PaymentRecord): {
     eyebrow: 'text-[#785000]',
     heading: 'Confirming payment…',
     message:
-      'Returning from Stripe is not proof of payment. PayFlow is waiting for a trusted server-side result.',
+      'Returning from a provider is not proof of payment. PayFlow is waiting for a trusted queued server-side result.',
   };
 }
 

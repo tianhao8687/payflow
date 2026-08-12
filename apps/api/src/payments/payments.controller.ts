@@ -38,15 +38,14 @@ export class PaymentsController {
 
   @Post('checkout-session')
   @ApiOperation({
-    summary:
-      'Create or reuse a Stripe test Checkout Session for an owned order',
+    summary: 'Create or reuse a provider sandbox checkout for an owned order',
   })
   @ApiCreatedResponse({ type: CheckoutSessionResponseDto })
   @ApiNotFoundResponse({ description: 'Order not found for this user' })
   @ApiConflictResponse({ description: 'Order or payment state is not payable' })
-  @ApiBadGatewayResponse({ description: 'Stripe request failed safely' })
+  @ApiBadGatewayResponse({ description: 'Provider request failed safely' })
   @ApiServiceUnavailableResponse({
-    description: 'Stripe test mode is not configured',
+    description: 'Selected provider sandbox mode is not configured',
   })
   createCheckoutSession(
     @CurrentUser() user: AuthenticatedUser,

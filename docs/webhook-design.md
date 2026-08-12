@@ -1,76 +1,96 @@
-# Stripe webhook reliability design
+# Provider webhook queue reliability design
 
 ## Trust boundary
 
-`POST /webhooks/stripe` does not use a user JWT. It authenticates Stripe with the
-endpoint-specific `Stripe-Signature` header and the exact raw request `Buffer`.
-NestJS starts with `rawBody: true`; parsing or reserializing JSON before
-verification is forbidden. `STRIPE_WEBHOOK_SECRET` must begin with `whsec_`, and
-the application accepts only events whose `livemode` flag is false.
+`POST /webhooks/stripe` and `POST /webhooks/paypal` are public at the JWT layer,
+but neither accepts unauthenticated provider data:
 
-Invalid signatures return `400` and create no event or business-state row. A
-missing signing secret returns `503`. Secrets, authorization headers, and raw
-signature values are never logged.
+- Stripe verifies `Stripe-Signature` against the exact raw request `Buffer` and
+  the endpoint-specific `whsec_...` secret. Live-mode events are rejected.
+- PayPal forwards the exact raw event plus `paypal-transmission-*`, certificate,
+  algorithm, and configured Sandbox webhook ID to PayPal's official
+  `/v1/notifications/verify-webhook-signature` endpoint. Only `SUCCESS` passes.
 
-## Processing pipeline
+Missing configuration returns `503`; missing raw bytes or invalid signatures
+return `400` before persistence. Secrets, authorization headers, OAuth tokens,
+and raw signatures are never logged.
+
+## Request and worker pipeline
 
 ```mermaid
 flowchart TD
-  Request[Raw Stripe request] --> Verify{Signature valid?}
-  Verify -->|No| Reject[400; no persistence]
+  Request[Raw Stripe or PayPal request] --> Verify{Provider verification valid?}
+  Verify -->|No| Reject[400 or 503; no persistence]
   Verify -->|Yes| EventLock[Event advisory lock]
   EventLock --> Existing{provider_event_id exists?}
-  Existing -->|Yes| Duplicate[Return stored result; no reprocessing]
-  Existing -->|No| Persist[Insert webhook_events JSONB row]
-  Persist --> Map{Recognized PayFlow event?}
-  Map -->|No| Ignore[Mark IGNORED and return 200]
-  Map -->|Payment or refund| OrderLock[Order advisory + row locks]
-  OrderLock --> Validate{IDs, provider, amount, currency valid?}
-  Validate -->|No| Failed[Mark FAILED; non-2xx; no business mutation]
+  Existing -->|Yes| Delivery[Increment delivery count]
+  Existing -->|No| Persist[Insert verified payload + normalized action]
+  Persist --> Enqueue[Enqueue DB event UUID as BullMQ job ID]
+  Delivery --> Enqueue
+  Enqueue --> Accepted[Record job ID/time; return 200]
+  Accepted --> Worker[Worker starts attempt]
+  Worker --> Action{Normalized action}
+  Action -->|Unknown/stale| Ignore[Mark IGNORED]
+  Action -->|PayPal approval| Capture[Idempotent provider capture]
+  Action -->|Payment/refund| Lock[Order advisory + row locks]
+  Capture --> Lock
+  Lock --> Validate{IDs, provider, amount, currency valid?}
+  Validate -->|No| Permanent[FAILED + unrecoverable job]
   Validate -->|Yes| Transition{State transition allowed?}
-  Transition -->|Stale/backward| Stale[Mark IGNORED; no mutation]
-  Transition -->|Yes| Atomic[Update Payment + Order + event in one transaction]
-  Atomic --> Success[Mark PROCESSED and return 200]
+  Transition -->|Stale/backward| Ignore
+  Transition -->|Yes| Atomic[Atomically update business state + event]
+  Worker -->|Transient failure| Retry[RECEIVED + exponential retry]
 ```
 
-The event lock handles concurrent delivery cheaply; the unique index on
-`provider_event_id` remains the durable final defense. Payloads are stored as
-the verified Stripe Event JSON in PostgreSQL JSONB for audit and debugging.
-PayFlow never enriches that payload with card numbers, CVC, secrets, or browser
-credentials.
+The API does not wait for `Worker` or `Atomic`. The provider's `2xx` response
+means the authenticated event is durably stored and queued. PostgreSQL is the
+business source of truth; BullMQ retains delivery/retry evidence.
 
-## Transaction and state rules
+## Persistence and recovery rules
 
-- The inbox insert, event result, Refund/Payment/Order update, and optional
-  system audit use one `READ COMMITTED` transaction with explicit advisory and
-  row locks. Queries after a waited lock see the newest committed state.
-- Order-scoped advisory locking is shared with payment reservation and unpaid
-  cancellation. Database row locks serialize distinct events for one payment.
-- Every state change calls the explicit Payment or Order transition function.
-- A successful event can move `PENDING`/`PROCESSING → SUCCEEDED` and
-  `PENDING_PAYMENT → PAID` atomically.
-- Current Stripe `refund.created`, `refund.updated`, and `refund.failed` events
-  validate the local Refund ID, PaymentIntent, amount, and currency before
-  moving `PENDING → SUCCEEDED | FAILED` and projecting aggregate refund state.
-- `charge.refunded` is signed and persisted but audit-only; current Refund
-  events are the detailed lifecycle authority.
-- Once a Payment is successful or in a refund state, an older processing or
-  failure event is persisted as `IGNORED`; status cannot move backward.
-- A repeat of the same successful provider Event returns the persisted result.
-  It does not rerun state changes, even when deliveries arrive concurrently.
-- Unknown signed events are acknowledged after persistence so an endpoint can
-  safely receive a broader Stripe event set.
+- `webhook_events.provider_event_id` is unique and guarded by an event-scoped
+  advisory lock. Duplicate deliveries increment `delivery_count` and do not
+  create another domain event.
+- The normalized action is persisted with the verified payload, so a worker
+  restart never needs to trust a new unsigned reconstruction.
+- If Redis enqueue fails after the insert, the HTTP request fails. A provider
+  retry sees the existing `RECEIVED` row and safely retries the same job ID.
+- `processing_attempts`, `last_processing_started_at`, `processing_error`, and
+  `processed_at` make retries and terminal failure visible independent of Redis
+  retention.
+- Worker projection uses explicit Order, Payment, and Refund transitions under
+  transaction-scoped advisory/row locks. A business update and terminal event
+  result commit atomically.
+- Successful/refunded Payment state cannot move backward when an older pending
+  or failed event arrives.
+
+## Retry and dead-letter behavior
+
+The queue uses five total attempts and exponential backoff from one second.
+Provider network/timeout, rate-limit, and 5xx failures retry. Deterministic
+integrity, amount/currency, identity, missing-record, and state-machine failures
+are permanent and use BullMQ's unrecoverable path after one attempt.
+
+Completed jobs are retained for one day/up to 1,000. Failed jobs are retained
+for seven days/up to 2,000 and form the Stage 8 dead-letter operations surface.
+`GET /admin/queues/webhooks` exposes counts, states, timestamps, safe failure
+messages, and attempt totals without exposing payloads or credentials.
 
 ## Local verification
 
-Use Stripe CLI forwarding and the `whsec_...` value printed by that listener:
+Start PostgreSQL, Redis, API, worker, and web, then forward provider webhooks to
+their matching endpoint. For Stripe CLI:
 
 ```powershell
 stripe listen --events checkout.session.completed,checkout.session.async_payment_succeeded,checkout.session.async_payment_failed,payment_intent.processing,payment_intent.succeeded,payment_intent.payment_failed,refund.created,refund.updated,refund.failed,charge.refunded --forward-to localhost:4000/webhooks/stripe
 ```
 
-The automated E2E suite uses Stripe's official signing helper against the real
-NestJS raw-body route and PostgreSQL. It proves valid and invalid signatures,
-five concurrent duplicate deliveries, unknown events, integrity rejection,
-pending refund finalization, duplicate Refund delivery, and out-of-order
-protection without requiring a network tunnel in CI.
+Use the listener's exact `whsec_...` in the ignored API/worker environment.
+PayPal requires Sandbox client credentials plus the webhook ID configured for
+`http(s)://<host>/webhooks/paypal`.
+
+The Stage 8 E2E suite drives both providers through the same API, persists and
+queues signed/verified provider-shaped events, runs the actual worker, injects
+one transient PayPal capture failure, then proves two attempts, final paid
+state, and ADMIN queue visibility. A real Redis integration test independently
+proves BullMQ retry and retained attempt telemetry.

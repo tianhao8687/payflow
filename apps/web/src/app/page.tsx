@@ -9,7 +9,7 @@ export default function Home() {
         <div className="mx-auto grid max-w-[1536px] gap-10 px-5 py-14 sm:px-8 sm:py-20 lg:grid-cols-[minmax(0,1fr)_390px] lg:items-end lg:px-16 lg:py-24">
           <div className="max-w-[820px]">
             <p className="font-mono text-xs font-bold tracking-[0.15em] text-[#0757ff] uppercase sm:text-sm">
-              Stage 07 / Provider Adapter
+              Stage 08 / Providers + Queue
             </p>
             <h1 className="mt-5 text-[clamp(2.8rem,7vw,6.6rem)] leading-[0.88] font-bold tracking-[-0.075em]">
               Tools for reliable payment work.
@@ -17,9 +17,9 @@ export default function Home() {
           </div>
           <div className="border-l-4 border-[#0757ff] pl-5 sm:pl-6">
             <p className="text-base leading-7 text-[#555b66] sm:text-lg">
-              Build a server-priced order, complete Stripe Test Checkout, then
-              inspect signed payment and audited refund outcomes in the admin
-              control room through a tested, provider-neutral payment boundary.
+              Build a server-priced order, choose Stripe Test or PayPal Sandbox,
+              then inspect signed payment outcomes and observable worker retries
+              through one provider-neutral boundary.
             </p>
             <Link
               className="mt-5 inline-flex min-h-11 items-center font-semibold text-[#0757ff] underline decoration-2 underline-offset-4 hover:text-[#003fc7] focus-visible:rounded-sm focus-visible:outline-3 focus-visible:outline-offset-3 focus-visible:outline-[#0757ff]"

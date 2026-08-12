@@ -11,7 +11,9 @@ import {
   type CreatePaymentInput,
   type CreatePaymentResult,
   PAYMENT_PROVIDER,
+  PAYMENT_PROVIDER_REGISTRY,
   type PaymentProvider,
+  PaymentProviderRegistry,
   PaymentProviderError,
   ProviderPaymentStatus,
   ProviderRefundStatus,
@@ -19,6 +21,7 @@ import {
   type RefundPaymentResult,
 } from '@payflow/payment-core';
 import { StripeProvider } from '@payflow/payment-stripe';
+import type { WebhookWorker } from '@payflow/payment-queue';
 import request from 'supertest';
 import { App } from 'supertest/types';
 import Stripe from 'stripe';
@@ -33,6 +36,10 @@ import { ProductListResponseDto } from './../src/products/dto/product-list-respo
 import { CreateRefundResponseDto } from './../src/refunds/dto/refund-response.dto';
 import { WebhookResponseDto } from './../src/webhooks/dto/webhook-response.dto';
 import { WebhooksRepository } from './../src/webhooks/webhooks.repository';
+import {
+  startTestWebhookWorker,
+  waitForWebhookStatus,
+} from './webhook-worker-harness';
 
 interface ErrorResponse {
   code: string;
@@ -167,6 +174,7 @@ class FailureLabRefundOperations {
 describe('PayFlow Stage 6 Failure Lab (e2e)', () => {
   let app: INestApplication<App>;
   let database: DatabaseService;
+  let webhookWorker: WebhookWorker;
   let userToken: string;
   let adminToken: string;
   let productId: string;
@@ -202,6 +210,11 @@ describe('PayFlow Stage 6 Failure Lab (e2e)', () => {
     );
     await app.init();
     database = app.get(DatabaseService);
+    webhookWorker = startTestWebhookWorker(
+      database,
+      app.get<PaymentProviderRegistry>(PAYMENT_PROVIDER_REGISTRY),
+    );
+    await webhookWorker.waitUntilReady();
     await dropAtomicityConstraint();
 
     const registration = await request(app.getHttpServer())
@@ -259,7 +272,7 @@ describe('PayFlow Stage 6 Failure Lab (e2e)', () => {
           .slice(inputStart)
           .map((input) => input.idempotencyKey),
       ),
-    ).toEqual(new Set([`payment:create:${order.id}:1`]));
+    ).toEqual(new Set([`payment:create:stripe:${order.id}:1`]));
     await expect(
       database.prisma.payment.count({ where: { orderId: order.id } }),
     ).resolves.toBe(1);
@@ -278,9 +291,15 @@ describe('PayFlow Stage 6 Failure Lab (e2e)', () => {
 
     expect(bodies.filter((body) => !body.duplicate)).toHaveLength(1);
     expect(bodies.filter((body) => body.duplicate)).toHaveLength(4);
+    await waitForWebhookStatus(database, eventId, 'PROCESSED');
     await expect(
       database.prisma.webhookEvent.findUniqueOrThrow({
-        where: { providerEventId: eventId },
+        where: {
+          provider_providerEventId: {
+            provider: 'STRIPE',
+            providerEventId: eventId,
+          },
+        },
         select: { deliveryCount: true, status: true },
       }),
     ).resolves.toEqual({ deliveryCount: 5, status: 'PROCESSED' });
@@ -292,20 +311,18 @@ describe('PayFlow Stage 6 Failure Lab (e2e)', () => {
 
   it('03 — a stale failure after success cannot regress state', async () => {
     const fixture = await createCheckoutFixture();
+    const successEventId = `${eventPrefix}_03_success`;
     await sendWebhook(
       app,
-      paymentIntentEvent(
-        fixture,
-        `${eventPrefix}_03_success`,
-        'succeeded',
-        1_786_560_300,
-      ),
+      paymentIntentEvent(fixture, successEventId, 'succeeded', 1_786_560_300),
     ).expect(200);
+    await waitForWebhookStatus(database, successEventId, 'PROCESSED');
+    const staleEventId = `${eventPrefix}_03_stale`;
     const stale = await sendWebhook(
       app,
       paymentIntentEvent(
         fixture,
-        `${eventPrefix}_03_stale`,
+        staleEventId,
         'payment_failed',
         1_786_550_000,
       ),
@@ -313,8 +330,9 @@ describe('PayFlow Stage 6 Failure Lab (e2e)', () => {
 
     expect(stale.body).toMatchObject({
       duplicate: false,
-      status: 'IGNORED',
+      queued: true,
     });
+    await waitForWebhookStatus(database, staleEventId, 'IGNORED');
     await expect(readPaymentAndOrder(fixture)).resolves.toEqual({
       orderStatus: 'PAID',
       paymentStatus: 'SUCCEEDED',
@@ -350,7 +368,7 @@ describe('PayFlow Stage 6 Failure Lab (e2e)', () => {
           .slice(inputStart)
           .map((input) => input.idempotencyKey),
       ),
-    ).toEqual(new Set([`payment:create:${order.id}:1`]));
+    ).toEqual(new Set([`payment:create:stripe:${order.id}:1`]));
     const payment = await database.prisma.payment.findUniqueOrThrow({
       where: { id: retryBody.payment.id },
       include: { attempts: { orderBy: { createdAt: 'asc' } } },
@@ -393,6 +411,7 @@ describe('PayFlow Stage 6 Failure Lab (e2e)', () => {
     });
 
     await sendWebhook(app, event).expect(200);
+    await waitForWebhookStatus(database, eventId, 'PROCESSED');
     await expect(readPaymentAndOrder(fixture)).resolves.toEqual({
       orderStatus: 'PAID',
       paymentStatus: 'SUCCEEDED',
@@ -493,21 +512,33 @@ describe('PayFlow Stage 6 Failure Lab (e2e)', () => {
     );
 
     try {
-      await sendWebhook(app, event).expect(500);
+      await sendWebhook(app, event).expect(200);
+      await waitForWebhookStatus(database, eventId, 'FAILED');
       await expect(readPaymentAndOrder(fixture)).resolves.toEqual({
         orderStatus: 'PENDING_PAYMENT',
         paymentStatus: 'PENDING',
       });
       await expect(
-        database.prisma.webhookEvent.count({
-          where: { providerEventId: eventId },
+        database.prisma.webhookEvent.findUniqueOrThrow({
+          where: {
+            provider_providerEventId: {
+              provider: 'STRIPE',
+              providerEventId: eventId,
+            },
+          },
+          select: { status: true },
         }),
-      ).resolves.toBe(0);
+      ).resolves.toEqual({ status: 'FAILED' });
     } finally {
       await dropAtomicityConstraint();
     }
 
-    await sendWebhook(app, event).expect(200);
+    const recoveryEventId = `${eventId}_recovery`;
+    await sendWebhook(
+      app,
+      paymentIntentEvent(fixture, recoveryEventId, 'succeeded'),
+    ).expect(200);
+    await waitForWebhookStatus(database, recoveryEventId, 'PROCESSED');
     await expect(readPaymentAndOrder(fixture)).resolves.toEqual({
       orderStatus: 'PAID',
       paymentStatus: 'SUCCEEDED',
@@ -560,6 +591,7 @@ describe('PayFlow Stage 6 Failure Lab (e2e)', () => {
   });
 
   afterAll(async () => {
+    await webhookWorker?.close();
     if (database) {
       await dropAtomicityConstraint();
       await database.prisma.webhookEvent.deleteMany({
@@ -649,10 +681,12 @@ describe('PayFlow Stage 6 Failure Lab (e2e)', () => {
 
   async function createPaidFixture(label: string): Promise<LabFixture> {
     const fixture = await createCheckoutFixture();
+    const eventId = `${eventPrefix}_${label}_paid`;
     await sendWebhook(
       app,
-      paymentIntentEvent(fixture, `${eventPrefix}_${label}_paid`, 'succeeded'),
+      paymentIntentEvent(fixture, eventId, 'succeeded'),
     ).expect(200);
+    await waitForWebhookStatus(database, eventId, 'PROCESSED');
     return fixture;
   }
 

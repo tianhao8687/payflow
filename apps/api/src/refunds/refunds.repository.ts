@@ -31,6 +31,16 @@ export type RefundReservation =
 export class RefundsRepository {
   constructor(private readonly database: DatabaseService) {}
 
+  async findPaymentProvider(
+    paymentId: string,
+  ): Promise<PaymentProvider | null> {
+    const payment = await this.database.prisma.payment.findUnique({
+      where: { id: paymentId },
+      select: { provider: true },
+    });
+    return payment?.provider ?? null;
+  }
+
   async reserve(
     paymentId: string,
     actorId: string,

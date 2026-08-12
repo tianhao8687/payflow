@@ -23,6 +23,22 @@ services:
       start_period: 5s
     restart: unless-stopped
 
+  redis:
+    image: redis:8.8.1-alpine
+    command:
+      ['redis-server', '--appendonly', 'yes', '--appendfsync', 'everysec']
+    ports:
+      - '${REDIS_PORT:-6379}:6379'
+    volumes:
+      - payflow_redis_data:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 3s
+      timeout: 3s
+      retries: 15
+      start_period: 3s
+    restart: unless-stopped
+
   api:
     build:
       context: .
@@ -36,12 +52,19 @@ services:
       PAYFLOW_ADMIN_EMAIL: ${PAYFLOW_ADMIN_EMAIL:-admin@payflow.local}
       PAYFLOW_ADMIN_PASSWORD: ${PAYFLOW_ADMIN_PASSWORD:-Payflow-Sandbox-Admin-2026!}
       PORT: 4000
+      REDIS_URL: redis://redis:6379
+      PAYPAL_CLIENT_ID: ${PAYPAL_CLIENT_ID:-}
+      PAYPAL_CLIENT_SECRET: ${PAYPAL_CLIENT_SECRET:-}
+      PAYPAL_ENV: sandbox
+      PAYPAL_WEBHOOK_ID: ${PAYPAL_WEBHOOK_ID:-}
       STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
       STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
     ports:
       - '${API_PORT:-4000}:4000'
     depends_on:
       postgres:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     healthcheck:
       test:
@@ -55,6 +78,25 @@ services:
       timeout: 4s
       retries: 15
       start_period: 10s
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: .
+      dockerfile: apps/worker/Dockerfile
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-payflow}:${POSTGRES_PASSWORD:-payflow}@postgres:5432/${POSTGRES_DB:-payflow}?schema=public
+      NODE_ENV: production
+      PAYPAL_CLIENT_ID: ${PAYPAL_CLIENT_ID:-}
+      PAYPAL_CLIENT_SECRET: ${PAYPAL_CLIENT_SECRET:-}
+      PAYPAL_ENV: sandbox
+      REDIS_URL: redis://redis:6379
+      WEBHOOK_WORKER_CONCURRENCY: ${WEBHOOK_WORKER_CONCURRENCY:-8}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     restart: unless-stopped
 
   web:
@@ -88,3 +130,4 @@ services:
 
 volumes:
   payflow_postgres_data:
+  payflow_redis_data:

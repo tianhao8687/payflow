@@ -15,12 +15,19 @@ import {
   type AdminPaymentDetail,
   type AdminRefund,
   type AdminWebhook,
+  type AdminWebhookQueue,
   type CreateRefundResponse,
   type User,
 } from '@/lib/api';
 
 type AdminTab =
-  'dashboard' | 'orders' | 'payments' | 'refunds' | 'webhooks' | 'audit';
+  | 'dashboard'
+  | 'orders'
+  | 'payments'
+  | 'refunds'
+  | 'webhooks'
+  | 'queue'
+  | 'audit';
 
 type ResourceState<T> =
   | { status: 'idle' }
@@ -34,6 +41,7 @@ const tabs: Array<{ id: AdminTab; label: string }> = [
   { id: 'payments', label: 'Payments' },
   { id: 'refunds', label: 'Refunds' },
   { id: 'webhooks', label: 'Webhooks' },
+  { id: 'queue', label: 'Queue' },
   { id: 'audit', label: 'Audit log' },
 ];
 
@@ -52,14 +60,14 @@ export function AdminConsole({
         <div className="grid gap-8 px-6 py-8 sm:px-9 sm:py-10 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-end">
           <div>
             <p className="font-mono text-xs font-bold tracking-[0.16em] text-[#71a0ff] uppercase">
-              Stage 07 / Operations
+              Stage 08 / Operations
             </p>
             <h1 className="mt-4 text-4xl font-bold tracking-[-0.06em] sm:text-6xl">
               Payment control room
             </h1>
             <p className="mt-4 max-w-2xl text-sm leading-6 text-[#b9c0cc] sm:text-base">
-              Refunds, provider state, webhook delivery, and administrator
-              decisions are visible from one server-authoritative console.
+              Provider state, asynchronous webhook delivery, queue retries,
+              refunds, and administrator decisions are visible in one console.
             </p>
           </div>
           <div className="border-l-2 border-[#08ae8c] pl-4 text-sm">
@@ -99,6 +107,7 @@ export function AdminConsole({
         {activeTab === 'payments' ? <PaymentsPanel token={token} /> : null}
         {activeTab === 'refunds' ? <RefundsPanel token={token} /> : null}
         {activeTab === 'webhooks' ? <WebhooksPanel token={token} /> : null}
+        {activeTab === 'queue' ? <QueuePanel token={token} /> : null}
         {activeTab === 'audit' ? <AuditPanel token={token} /> : null}
       </div>
     </section>
@@ -748,6 +757,10 @@ function WebhooksPanel({ token }: { token: string }) {
                             {event.deliveryCount}
                           </p>
                           <p className="text-xs text-[#555b66]">deliveries</p>
+                          <p className="mt-2 font-mono text-xs font-bold text-[#555b66]">
+                            {event.processingAttempts} worker attempt
+                            {event.processingAttempts === 1 ? '' : 's'}
+                          </p>
                         </div>
                       </div>
                       {event.processingError ? (
@@ -765,6 +778,14 @@ function WebhooksPanel({ token }: { token: string }) {
                           label="Last received"
                           value={formatDate(event.lastReceivedAt)}
                         />
+                        <Fact
+                          label="Queued"
+                          value={
+                            event.queuedAt
+                              ? formatDate(event.queuedAt)
+                              : 'Not queued'
+                          }
+                        />
                       </dl>
                     </li>
                   ))}
@@ -775,6 +796,108 @@ function WebhooksPanel({ token }: { token: string }) {
               <EmptyState label="No webhook events match these filters." />
             )
           }
+        </ResourceList>
+      </div>
+    </div>
+  );
+}
+
+function QueuePanel({ token }: { token: string }) {
+  const resource = useAdminResource<AdminWebhookQueue>(
+    '/admin/queues/webhooks',
+    token,
+  );
+
+  return (
+    <div>
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+        <PanelHeading eyebrow="BullMQ / Redis" title="Webhook retry queue" />
+        <button
+          className={pageButtonClass}
+          onClick={resource.refresh}
+          type="button"
+        >
+          Refresh queue
+        </button>
+      </div>
+      <div className="mt-6">
+        <ResourceList resource={resource} title="webhook queue">
+          {(data) => (
+            <div>
+              <dl className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                {['waiting', 'active', 'delayed', 'failed'].map((state) => (
+                  <div
+                    className={`border p-4 ${
+                      state === 'failed'
+                        ? 'border-[#efb6be] bg-[#fff7f8]'
+                        : 'border-[#cdd2d9] bg-[#f8f9fb]'
+                    }`}
+                    key={state}
+                  >
+                    <dt className="text-xs font-bold tracking-[0.08em] text-[#555b66] uppercase">
+                      {state}
+                    </dt>
+                    <dd className="mt-3 font-mono text-3xl font-bold tabular-nums">
+                      {data.counts[state] ?? 0}
+                    </dd>
+                  </div>
+                ))}
+              </dl>
+
+              {data.jobs.length > 0 ? (
+                <ul className="mt-6 grid gap-3">
+                  {data.jobs.map((job) => (
+                    <li
+                      className="border border-[#d7dbe2] p-4 sm:p-5"
+                      key={job.id}
+                    >
+                      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                        <div className="min-w-0">
+                          <StatusPill value={job.state.toUpperCase()} />
+                          <p className="mt-3 break-all font-mono text-xs text-[#555b66]">
+                            Event {job.webhookEventId}
+                          </p>
+                        </div>
+                        <div className="shrink-0 border-l-2 border-[#0757ff] pl-3 text-right">
+                          <p className="font-mono text-2xl font-bold tabular-nums">
+                            {job.attemptsMade} / {job.attemptsTotal}
+                          </p>
+                          <p className="text-xs text-[#555b66]">attempts</p>
+                        </div>
+                      </div>
+                      {job.failedReason ? (
+                        <p
+                          className="mt-4 border-l-4 border-[#b42335] bg-[#fff0f2] p-3 text-sm leading-6 text-[#7e1d2c]"
+                          role="status"
+                        >
+                          {job.failedReason}
+                        </p>
+                      ) : null}
+                      <dl className="mt-4 grid gap-3 border-t border-[#d7dbe2] pt-4 text-xs sm:grid-cols-3">
+                        <Fact label="Job ID" value={job.id} />
+                        <Fact
+                          label="Created"
+                          value={formatDate(job.timestamp)}
+                        />
+                        <Fact
+                          label="Finished"
+                          value={
+                            job.finishedAt
+                              ? formatDate(job.finishedAt)
+                              : 'In progress'
+                          }
+                        />
+                      </dl>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <div className="mt-6">
+                  <EmptyState label="No retained webhook jobs are visible." />
+                </div>
+              )}
+            </div>
+          )}
         </ResourceList>
       </div>
     </div>

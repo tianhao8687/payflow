@@ -2,6 +2,10 @@ export const PAYMENT_PROVIDER = Symbol.for(
   '@payflow/payment-core/PaymentProvider',
 );
 
+export const PAYMENT_PROVIDER_REGISTRY = Symbol.for(
+  '@payflow/payment-core/PaymentProviderRegistry',
+);
+
 export const PaymentProviderCapability = {
   PAYMENT: 'PAYMENT',
   REFUND: 'REFUND',
@@ -83,6 +87,7 @@ export type CancelPaymentResult = ProviderPayment;
 
 export interface RefundPaymentInput {
   amount: number;
+  currency: string;
   idempotencyKey: string;
   orderId: string;
   paymentId: string;
@@ -103,6 +108,7 @@ export interface RefundPaymentResult {
 }
 
 export interface VerifyWebhookInput {
+  headers?: Readonly<Record<string, string | undefined>>;
   rawBody: Uint8Array;
   signature: string;
 }
@@ -131,14 +137,21 @@ export interface ProviderPaymentTransitionAction {
     | typeof ProviderPaymentStatus.FAILED;
 }
 
+export interface ProviderCapturePaymentAction {
+  kind: 'CAPTURE_PAYMENT';
+  orderId: string;
+  paymentId: string;
+  providerCheckoutSessionId: string;
+}
+
 export interface ProviderRefundSyncAction {
   amount: number;
   currency: string;
   failureCode: string | null;
   failureMessage: string | null;
   kind: 'REFUND_SYNC';
-  orderId: string;
-  paymentId: string;
+  orderId: string | null;
+  paymentId: string | null;
   providerPaymentId: string | null;
   providerRefundId: string;
   providerRequestId: string | null;
@@ -149,6 +162,7 @@ export interface ProviderRefundSyncAction {
 export type ProviderWebhookAction =
   | ProviderWebhookIgnoredAction
   | ProviderWebhookRejectedAction
+  | ProviderCapturePaymentAction
   | ProviderPaymentTransitionAction
   | ProviderRefundSyncAction;
 
@@ -177,4 +191,38 @@ export interface PaymentProvider {
   refundPayment(input: RefundPaymentInput): Promise<RefundPaymentResult>;
 
   verifyWebhook(input: VerifyWebhookInput): Promise<VerifiedWebhookEvent>;
+}
+
+export class PaymentProviderRegistry {
+  private readonly providers: ReadonlyMap<string, PaymentProvider>;
+
+  constructor(providers: readonly PaymentProvider[]) {
+    const entries = providers.map(
+      (provider) => [provider.name.toUpperCase(), provider] as const,
+    );
+
+    if (new Set(entries.map(([name]) => name)).size !== entries.length) {
+      throw new Error('Payment provider names must be unique.');
+    }
+
+    this.providers = new Map(entries);
+  }
+
+  get(name: string): PaymentProvider | undefined {
+    return this.providers.get(name.toUpperCase());
+  }
+
+  require(name: string): PaymentProvider {
+    const provider = this.get(name);
+
+    if (!provider) {
+      throw new Error(`Payment provider ${name} is not registered.`);
+    }
+
+    return provider;
+  }
+
+  names(): string[] {
+    return [...this.providers.keys()];
+  }
 }

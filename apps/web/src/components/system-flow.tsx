@@ -6,6 +6,7 @@ import {
   ArrowIcon,
   CheckIcon,
   CodeIcon,
+  ContainerIcon,
   DatabaseIcon,
   GatewayIcon,
   ServerIcon,
@@ -44,8 +45,8 @@ export function SystemFlow() {
 
   return (
     <div
-      className="relative grid grid-cols-2 gap-x-4 gap-y-10 sm:gap-x-7 lg:grid-cols-4 lg:gap-4"
-      aria-label="PayFlow Stage 7 system flow"
+      className="relative grid grid-cols-2 gap-x-4 gap-y-10 sm:grid-cols-3 sm:gap-x-7 lg:grid-cols-6 lg:gap-4"
+      aria-label="PayFlow Stage 8 system flow"
     >
       <FlowNode
         icon={<CodeIcon />}
@@ -69,9 +70,23 @@ export function SystemFlow() {
       />
       <FlowNode
         connector
+        icon={<DatabaseIcon />}
+        label="Redis + BullMQ"
+        status={infrastructureReady ? 'ready' : apiState}
+        statusTone={infrastructureReady ? 'success' : 'pending'}
+      />
+      <FlowNode
+        connector
+        icon={<ContainerIcon />}
+        label="Webhook worker"
+        status={infrastructureReady ? 'processing' : apiState}
+        statusTone={infrastructureReady ? 'success' : 'pending'}
+      />
+      <FlowNode
+        connector
         icon={<GatewayIcon />}
-        label="Stripe sandbox"
-        status="checkout + refunds"
+        label="Stripe + PayPal"
+        status="sandbox providers"
         statusTone="success"
       />
     </div>

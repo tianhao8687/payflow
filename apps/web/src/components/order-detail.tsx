@@ -7,7 +7,7 @@ import { ApiError, apiRequest, formatMoney, type Order } from '@/lib/api';
 
 import { useAuth } from './auth-provider';
 import { OrderStatusBadge } from './order-status-badge';
-import { StripeCheckoutButton } from './stripe-checkout-button';
+import { PaymentCheckoutControl } from './payment-checkout-control';
 
 type DetailState =
   | { status: 'loading' }
@@ -115,9 +115,10 @@ export function OrderDetail({ id }: { id: string }) {
   }
 
   const { order } = state;
-  const hasActivePayment = order.payments.some(
+  const activePayment = order.payments.find(
     (payment) => payment.status !== 'FAILED',
   );
+  const hasActivePayment = Boolean(activePayment);
 
   async function cancelOrder(): Promise<void> {
     if (!token || cancelling) {
@@ -285,11 +286,15 @@ export function OrderDetail({ id }: { id: string }) {
                     Sandbox payment
                   </h2>
                   <p className="mt-2 max-w-xl text-sm leading-6 text-[#555b66]">
-                    Stripe hosts the card form. Returning to PayFlow only starts
-                    result confirmation; it never marks the order paid.
+                    Stripe and PayPal host the payment step. PayFlow only marks
+                    the order paid after a verified, queued provider event is
+                    handled by the worker.
                   </p>
                   <div className="mt-4">
-                    <StripeCheckoutButton orderId={order.id} />
+                    <PaymentCheckoutControl
+                      activeProvider={activePayment?.provider}
+                      orderId={order.id}
+                    />
                   </div>
                 </div>
                 {hasActivePayment ? (

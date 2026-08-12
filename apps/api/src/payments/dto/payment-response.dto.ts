@@ -45,7 +45,7 @@ export class PaymentResponseDto {
 }
 
 export class CheckoutSessionResponseDto {
-  @ApiProperty({ description: 'Stripe-hosted test Checkout URL.' })
+  @ApiProperty({ description: 'Provider-hosted sandbox Checkout URL.' })
   checkoutUrl!: string;
 
   @ApiProperty({ format: 'date-time' })

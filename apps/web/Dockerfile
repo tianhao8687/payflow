@@ -17,8 +17,12 @@ WORKDIR /workspace
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
 COPY apps/api/package.json apps/api/package.json
 COPY apps/web/package.json apps/web/package.json
+COPY apps/worker/package.json apps/worker/package.json
 COPY packages/database/package.json packages/database/package.json
 COPY packages/payment-core/package.json packages/payment-core/package.json
+COPY packages/payment-domain/package.json packages/payment-domain/package.json
+COPY packages/payment-paypal/package.json packages/payment-paypal/package.json
+COPY packages/payment-queue/package.json packages/payment-queue/package.json
 COPY packages/payment-stripe/package.json packages/payment-stripe/package.json
 COPY packages/shared/package.json packages/shared/package.json
 

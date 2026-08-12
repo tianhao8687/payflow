@@ -7,13 +7,16 @@ import {
   type CreatePaymentInput,
   type CreatePaymentResult,
   PAYMENT_PROVIDER,
+  PAYMENT_PROVIDER_REGISTRY,
   type PaymentProvider,
+  PaymentProviderRegistry,
   ProviderPaymentStatus,
   ProviderRefundStatus,
   type RefundPaymentInput,
   type RefundPaymentResult,
 } from '@payflow/payment-core';
 import { StripeProvider } from '@payflow/payment-stripe';
+import type { WebhookWorker } from '@payflow/payment-queue';
 import request from 'supertest';
 import { App } from 'supertest/types';
 import Stripe from 'stripe';
@@ -39,6 +42,10 @@ import { OrderResponseDto } from './../src/orders/dto/order-response.dto';
 import { CheckoutSessionResponseDto } from './../src/payments/dto/payment-response.dto';
 import { CreateRefundResponseDto } from './../src/refunds/dto/refund-response.dto';
 import { WebhookResponseDto } from './../src/webhooks/dto/webhook-response.dto';
+import {
+  startTestWebhookWorker,
+  waitForWebhookStatus,
+} from './webhook-worker-harness';
 
 interface ErrorResponse {
   code: string;
@@ -152,9 +159,10 @@ class FakeRefundOperations {
   }
 }
 
-describe('PayFlow API acceptance through Stage 7 (e2e)', () => {
+describe('PayFlow API acceptance through Stage 8 (e2e)', () => {
   let app: INestApplication<App>;
   let database: DatabaseService;
+  let webhookWorker: WebhookWorker;
   const userEmail = `stage-1-${Date.now()}@example.com`;
   const userPassword = 'Reliable-payments-2026!';
   const orderOwnerEmail = `stage-2-owner-${Date.now()}@example.com`;
@@ -208,12 +216,17 @@ describe('PayFlow API acceptance through Stage 7 (e2e)', () => {
     );
     await app.init();
     database = app.get(DatabaseService);
+    webhookWorker = startTestWebhookWorker(
+      database,
+      app.get<PaymentProviderRegistry>(PAYMENT_PROVIDER_REGISTRY),
+    );
+    await webhookWorker.waitUntilReady();
   });
 
   it('exposes system and seeded product reads without authentication', async () => {
     await request(app.getHttpServer()).get('/').expect(200).expect({
       service: 'PayFlow API',
-      stage: 7,
+      stage: 8,
       health: '/health',
       docs: '/docs',
     });
@@ -492,7 +505,7 @@ describe('PayFlow API acceptance through Stage 7 (e2e)', () => {
     expect(fakeStripe.uniqueSessionCount).toBe(1);
     expect(
       new Set(fakeStripe.inputs.map((input) => input.idempotencyKey)),
-    ).toEqual(new Set([`payment:create:${order.id}:1`]));
+    ).toEqual(new Set([`payment:create:stripe:${order.id}:1`]));
     expect(fakeStripe.inputs[0]).toMatchObject({
       amount: order.totalAmount,
       currency: order.currency,
@@ -608,7 +621,9 @@ describe('PayFlow API acceptance through Stage 7 (e2e)', () => {
 
     expect(bodies.filter((body) => !body.duplicate)).toHaveLength(1);
     expect(bodies.filter((body) => body.duplicate)).toHaveLength(4);
-    expect(bodies.every((body) => body.status === 'PROCESSED')).toBe(true);
+    expect(bodies.every((body) => body.received)).toBe(true);
+    expect(bodies.some((body) => body.queued)).toBe(true);
+    await waitForWebhookStatus(database, eventId, 'PROCESSED');
 
     const persistedEvents = await database.prisma.webhookEvent.findMany({
       where: { providerEventId: eventId },
@@ -654,14 +669,21 @@ describe('PayFlow API acceptance through Stage 7 (e2e)', () => {
       (stageThreeOrderAmount as number) + 1,
       stageThreeOrderCurrency as string,
     );
-    const response = await sendWebhook(event).expect(400);
-
-    expect((response.body as unknown as ErrorResponse).code).toBe(
-      'WEBHOOK_EVENT_REJECTED',
-    );
+    const response = await sendWebhook(event).expect(200);
+    expect(response.body).toMatchObject({
+      duplicate: false,
+      queued: true,
+      received: true,
+    });
+    await waitForWebhookStatus(database, eventId, 'FAILED');
     await expect(
       database.prisma.webhookEvent.findUniqueOrThrow({
-        where: { providerEventId: eventId },
+        where: {
+          provider_providerEventId: {
+            provider: 'STRIPE',
+            providerEventId: eventId,
+          },
+        },
         select: { status: true },
       }),
     ).resolves.toEqual({ status: 'FAILED' });
@@ -685,8 +707,9 @@ describe('PayFlow API acceptance through Stage 7 (e2e)', () => {
     expect(stageThreeOrderAmount).toBeDefined();
     expect(stageThreeOrderCurrency).toBeDefined();
 
+    const staleEventId = `${webhookEventPrefix}_stale_failure`;
     const staleEvent = paymentIntentEvent(
-      `${webhookEventPrefix}_stale_failure`,
+      staleEventId,
       'payment_intent.payment_failed',
       stageThreePaymentId as string,
       stageThreeOrderId as string,
@@ -697,15 +720,17 @@ describe('PayFlow API acceptance through Stage 7 (e2e)', () => {
     const staleResponse = await sendWebhook(staleEvent).expect(200);
     expect(staleResponse.body).toMatchObject({
       duplicate: false,
+      queued: true,
       received: true,
-      status: 'IGNORED',
     });
+    await waitForWebhookStatus(database, staleEventId, 'IGNORED');
 
+    const unknownEventId = `${webhookEventPrefix}_unknown`;
     const unknownResponse = await sendWebhook({
       api_version: '2026-07-29.dahlia',
       created: 1_786_560_100,
       data: { object: { id: 'cus_stage_4', object: 'customer' } },
-      id: `${webhookEventPrefix}_unknown`,
+      id: unknownEventId,
       livemode: false,
       object: 'event',
       pending_webhooks: 1,
@@ -714,8 +739,9 @@ describe('PayFlow API acceptance through Stage 7 (e2e)', () => {
     }).expect(200);
     expect(unknownResponse.body).toMatchObject({
       duplicate: false,
-      status: 'IGNORED',
+      queued: true,
     });
+    await waitForWebhookStatus(database, unknownEventId, 'IGNORED');
 
     await expect(
       database.prisma.payment.findUniqueOrThrow({
@@ -829,8 +855,9 @@ describe('PayFlow API acceptance through Stage 7 (e2e)', () => {
     const webhook = await sendWebhook(event).expect(200);
     expect(webhook.body).toMatchObject({
       duplicate: false,
-      status: 'PROCESSED',
+      queued: true,
     });
+    await waitForWebhookStatus(database, eventId, 'PROCESSED');
     const duplicateWebhook = await sendWebhook(event).expect(200);
     expect(duplicateWebhook.body).toMatchObject({
       duplicate: true,
@@ -1147,6 +1174,7 @@ describe('PayFlow API acceptance through Stage 7 (e2e)', () => {
   });
 
   afterAll(async () => {
+    await webhookWorker?.close();
     if (database) {
       await database.prisma.webhookEvent.deleteMany({
         where: { providerEventId: { startsWith: webhookEventPrefix } },

@@ -89,7 +89,7 @@ describe('PaymentsService', () => {
       expect.objectContaining({
         amount: 3998,
         currency: 'USD',
-        idempotencyKey: 'payment:create:order-id:1',
+        idempotencyKey: 'payment:create:stripe:order-id:1',
         lines: [
           {
             name: 'Snapshot Product',
@@ -171,7 +171,7 @@ function createReservation(): PaymentReservation {
     createdAt: now,
     currency: 'USD',
     id: 'payment-id',
-    idempotencyKey: 'payment:create:order-id:1',
+    idempotencyKey: 'payment:create:stripe:order-id:1',
     orderId: 'order-id',
     provider: PaymentProvider.STRIPE,
     providerCheckoutSessionId: null,

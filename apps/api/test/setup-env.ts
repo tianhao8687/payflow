@@ -7,3 +7,4 @@ process.env.JWT_EXPIRES_IN_SECONDS ??= '900';
 process.env.PAYFLOW_ADMIN_EMAIL ??= 'admin@payflow.local';
 process.env.PAYFLOW_ADMIN_PASSWORD ??= 'Payflow-Sandbox-Admin-2026!';
 process.env.STRIPE_WEBHOOK_SECRET ??= 'whsec_payflow_stage_4_e2e_only';
+process.env.REDIS_URL ??= 'redis://localhost:6379';

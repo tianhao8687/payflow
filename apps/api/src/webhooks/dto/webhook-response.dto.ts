@@ -13,4 +13,10 @@ export class WebhookResponseDto {
 
   @ApiProperty({ enum: WebhookEventStatus })
   status!: WebhookEventStatus;
+
+  @ApiProperty({
+    description: 'True when a BullMQ job exists for asynchronous processing',
+    example: true,
+  })
+  queued!: boolean;
 }

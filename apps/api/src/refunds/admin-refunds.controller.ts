@@ -33,9 +33,11 @@ export class AdminRefundsController {
   @ApiConflictResponse({
     description: 'Payment state or cumulative refund amount is invalid',
   })
-  @ApiBadGatewayResponse({ description: 'Stripe refund request failed safely' })
+  @ApiBadGatewayResponse({
+    description: 'Provider refund request failed safely',
+  })
   @ApiServiceUnavailableResponse({
-    description: 'Stripe test mode is not configured',
+    description: 'Payment provider sandbox mode is not configured',
   })
   create(
     @Param('id', new ParseUUIDPipe({ version: '4' })) paymentId: string,

@@ -1,5 +1,6 @@
 # PayFlow web
 
-Next.js App Router application for PayFlow. Stage 1 provides the public catalog,
-product detail, registration, login, account identity, admin-boundary verifier,
-and runtime status pages. See the repository root README for setup and commands.
+Next.js App Router application for PayFlow. Through Stage 8 it provides catalog,
+identity, cart/orders, accessible Stripe Test or PayPal Sandbox selection,
+authoritative payment results, and an ADMIN operations console with queue retry
+visibility. See the repository root README for setup and acceptance commands.

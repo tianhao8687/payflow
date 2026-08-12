@@ -18,12 +18,12 @@ const readinessItems = [
   },
   {
     title: 'Data',
-    detail: 'Orders + payments + refunds',
+    detail: 'PostgreSQL + Redis queue state',
     icon: DatabaseIcon,
   },
   {
     title: 'Delivery',
-    detail: 'Provider adapter + failure gates',
+    detail: 'Stripe + PayPal + retry worker',
     icon: ContainerIcon,
   },
 ] as const;

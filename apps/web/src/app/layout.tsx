@@ -13,12 +13,12 @@ export const metadata: Metadata = {
     template: '%s | PayFlow',
   },
   description:
-    'Create server-priced orders and confirm Stripe Test payments through signed, idempotent webhooks.',
+    'Create server-priced orders and confirm Stripe or PayPal sandbox payments through queued, signed webhooks.',
 };
 
 export default function RootLayout({ children }: LayoutProps<'/'>) {
   return (
-    <html lang="en">
+    <html lang="en" data-scroll-behavior="smooth">
       <body>
         <AuthProvider>
           <CartProvider>

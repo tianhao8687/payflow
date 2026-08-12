@@ -51,6 +51,7 @@ describe('StripeProvider payment adapter', () => {
     expect(create).toHaveBeenCalledWith(
       expect.objectContaining({
         client_reference_id: 'order-id',
+        integration_identifier: 'payflow_qxnmjvra',
         metadata: { orderId: 'order-id', paymentId: 'payment-id' },
         payment_intent_data: {
           metadata: { orderId: 'order-id', paymentId: 'payment-id' },
@@ -59,6 +60,8 @@ describe('StripeProvider payment adapter', () => {
       }),
       { idempotencyKey: 'payment:create:order-id:1' },
     );
+    const createCalls = create.mock.calls as unknown[][];
+    expect(createCalls[0]?.[0]).not.toHaveProperty('payment_method_types');
   });
 
   it('normalizes lookup, capture, and cancellation statuses', async () => {

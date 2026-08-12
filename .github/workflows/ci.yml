@@ -18,6 +18,7 @@ env:
   JWT_SECRET: payflow-ci-jwt-secret-not-for-production-2026
   PAYFLOW_ADMIN_EMAIL: admin@payflow.local
   PAYFLOW_ADMIN_PASSWORD: Payflow-CI-Admin-2026!
+  REDIS_URL: redis://localhost:6379
 
 jobs:
   quality:
@@ -35,6 +36,15 @@ jobs:
           - 5432:5432
         options: >-
           --health-cmd "pg_isready -U payflow -d payflow"
+          --health-interval 3s
+          --health-timeout 3s
+          --health-retries 15
+      redis:
+        image: redis:8.8.1-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
           --health-interval 3s
           --health-timeout 3s
           --health-retries 15
@@ -64,6 +74,9 @@ jobs:
       - name: Check formatting
         run: pnpm format:check
 
+      - name: Scan tracked files for payment secrets
+        run: pnpm secrets:scan
+
       - name: Lint
         run: pnpm lint
 
@@ -77,7 +90,9 @@ jobs:
         run: pnpm db:migrate:deploy && pnpm db:seed
 
       - name: API end-to-end and failure lab
-        run: pnpm test:e2e
+        env:
+          RUN_REDIS_INTEGRATION: 'true'
+        run: pnpm test:e2e && pnpm --filter @payflow/payment-queue test
 
       - name: Build
         run: pnpm build

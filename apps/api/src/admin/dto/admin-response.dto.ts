@@ -260,6 +260,15 @@ export class AdminWebhookItemDto {
   @ApiProperty()
   deliveryCount!: number;
 
+  @ApiProperty()
+  processingAttempts!: number;
+
+  @ApiPropertyOptional()
+  queueJobId!: string | null;
+
+  @ApiPropertyOptional({ format: 'date-time' })
+  queuedAt!: string | null;
+
   @ApiPropertyOptional()
   processingError!: string | null;
 
@@ -271,6 +280,46 @@ export class AdminWebhookItemDto {
 
   @ApiPropertyOptional({ format: 'date-time' })
   processedAt!: string | null;
+}
+
+export class AdminWebhookQueueJobDto {
+  @ApiProperty()
+  id!: string;
+
+  @ApiProperty({ format: 'uuid' })
+  webhookEventId!: string;
+
+  @ApiProperty()
+  state!: string;
+
+  @ApiProperty()
+  attemptsMade!: number;
+
+  @ApiProperty()
+  attemptsTotal!: number;
+
+  @ApiPropertyOptional()
+  failedReason!: string | null;
+
+  @ApiProperty({ format: 'date-time' })
+  timestamp!: string;
+
+  @ApiPropertyOptional({ format: 'date-time' })
+  processedAt!: string | null;
+
+  @ApiPropertyOptional({ format: 'date-time' })
+  finishedAt!: string | null;
+}
+
+export class AdminWebhookQueueResponseDto {
+  @ApiProperty({
+    additionalProperties: { type: 'number' },
+    type: 'object',
+  })
+  counts!: Record<string, number>;
+
+  @ApiProperty({ type: [AdminWebhookQueueJobDto] })
+  jobs!: AdminWebhookQueueJobDto[];
 }
 
 export class AdminWebhooksResponseDto extends AdminPaginationMetaDto {

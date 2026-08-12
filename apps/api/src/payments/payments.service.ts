@@ -14,10 +14,11 @@ import {
   PaymentStatus,
 } from '@payflow/database';
 import {
-  PAYMENT_PROVIDER,
+  PAYMENT_PROVIDER_REGISTRY,
   type PaymentProvider,
   PaymentProviderCapability,
   PaymentProviderError,
+  PaymentProviderRegistry,
 } from '@payflow/payment-core';
 
 import type { ApiEnvironment } from '../config/environment';
@@ -39,8 +40,8 @@ export class PaymentsService {
   constructor(
     config: ConfigService<ApiEnvironment, true>,
     private readonly paymentsRepository: PaymentsRepository,
-    @Inject(PAYMENT_PROVIDER)
-    private readonly paymentProvider: PaymentProvider,
+    @Inject(PAYMENT_PROVIDER_REGISTRY)
+    private readonly providers: PaymentProviderRegistry | PaymentProvider,
   ) {
     this.appBaseUrl = config
       .get('APP_BASE_URL', { infer: true })
@@ -51,17 +52,29 @@ export class PaymentsService {
     userId: string,
     request: CreateCheckoutSessionRequestDto,
   ): Promise<CheckoutSessionResponseDto> {
-    if (!this.paymentProvider.isConfigured(PaymentProviderCapability.PAYMENT)) {
+    const providerName = request.provider ?? DatabasePaymentProvider.STRIPE;
+    const paymentProvider = this.providerFor(providerName);
+
+    if (!paymentProvider) {
+      throw new ServiceUnavailableException({
+        code: 'PAYMENT_PROVIDER_UNSUPPORTED',
+        details: { provider: providerName },
+        message: 'The selected payment provider is not enabled locally.',
+      });
+    }
+
+    if (!paymentProvider.isConfigured(PaymentProviderCapability.PAYMENT)) {
       throw new ServiceUnavailableException({
         code: 'PAYMENT_PROVIDER_NOT_CONFIGURED',
-        message: 'The sandbox payment provider is not configured.',
+        details: { provider: providerName },
+        message: 'The selected sandbox payment provider is not configured.',
       });
     }
 
     const reservation = await this.paymentsRepository.reservePayment(
       request.orderId,
       userId,
-      this.databaseProvider(),
+      providerName,
     );
 
     if (!reservation) {
@@ -93,6 +106,15 @@ export class PaymentsService {
       });
     }
 
+    if (reservation.payment.provider !== providerName) {
+      throw new ConflictException({
+        code: 'PAYMENT_PROVIDER_CONFLICT',
+        details: { activeProvider: reservation.payment.provider },
+        message:
+          'This order already has an active checkout with another provider.',
+      });
+    }
+
     const existing = this.existingCheckoutResponse(
       reservation.payment,
       !reservation.created,
@@ -115,7 +137,7 @@ export class PaymentsService {
     );
 
     try {
-      const result = await this.paymentProvider.createPayment({
+      const result = await paymentProvider.createPayment({
         amount: reservation.payment.amount,
         cancelUrl: `${this.appBaseUrl}/orders/${reservation.order.id}?checkout=cancelled`,
         currency: reservation.payment.currency,
@@ -128,7 +150,10 @@ export class PaymentsService {
         })),
         orderId: reservation.order.id,
         paymentId: reservation.payment.id,
-        successUrl: `${this.appBaseUrl}/payments/${reservation.payment.id}/result?session_id={CHECKOUT_SESSION_ID}`,
+        successUrl:
+          providerName === DatabasePaymentProvider.STRIPE
+            ? `${this.appBaseUrl}/payments/${reservation.payment.id}/result?session_id={CHECKOUT_SESSION_ID}`
+            : `${this.appBaseUrl}/payments/${reservation.payment.id}/result?provider=paypal`,
       });
 
       if (
@@ -136,7 +161,7 @@ export class PaymentsService {
         result.currency !== reservation.payment.currency
       ) {
         throw new PaymentProviderError(
-          this.paymentProvider.name,
+          paymentProvider.name,
           'CREATE_PAYMENT',
           'PROVIDER_AMOUNT_MISMATCH',
           'The provider returned an amount or currency that differs from the local payment.',
@@ -178,7 +203,7 @@ export class PaymentsService {
       throw new BadGatewayException({
         code: 'PAYMENT_PROVIDER_ERROR',
         details: {
-          provider: this.paymentProvider.name,
+          provider: paymentProvider.name,
           providerCode: failure.code,
         },
         message:
@@ -246,16 +271,14 @@ export class PaymentsService {
     };
   }
 
-  private databaseProvider(): DatabasePaymentProvider {
-    if (this.paymentProvider.name === DatabasePaymentProvider.STRIPE) {
-      return DatabasePaymentProvider.STRIPE;
+  private providerFor(
+    name: DatabasePaymentProvider,
+  ): PaymentProvider | undefined {
+    if (this.providers instanceof PaymentProviderRegistry) {
+      return this.providers.get(name);
     }
 
-    throw new ServiceUnavailableException({
-      code: 'PAYMENT_PROVIDER_UNSUPPORTED',
-      details: { provider: this.paymentProvider.name },
-      message: 'The configured payment provider is not enabled locally.',
-    });
+    return this.providers.name === name ? this.providers : undefined;
   }
 
   private toResponse(payment: PaymentWithCount): PaymentResponseDto {
