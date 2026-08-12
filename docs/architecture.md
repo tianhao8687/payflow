@@ -1,8 +1,8 @@
 # PayFlow architecture
 
-## Current boundary: Stage 10 acceptance pending
+## Current boundary: Stage 10 accepted
 
-Stage 10 adds an observability and portfolio layer around the accepted Stage 9
+Stage 10 adds an accepted observability and portfolio layer around the Stage 9
 system. It does not change the locked Order, Payment, Refund, WebhookEvent,
 outbox, ledger, or reconciliation ownership rules. The NestJS API remains the
 sole HTTP/business authorization boundary; PostgreSQL remains the source of

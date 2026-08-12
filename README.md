@@ -4,11 +4,11 @@ PayFlow is a full-stack payment-system portfolio project implemented one
 acceptance-gated stage at a time from the accompanying Codex implementation
 specification.
 
-> Current delivery: **Stage 10 — Observability + Portfolio (acceptance pending)**.
+> Current delivery: **Stage 10 — Observability + Portfolio (accepted)**.
 > The complete sandbox payment flow now emits redacted JSON logs, correlated
 > OpenTelemetry traces, six low-cardinality payment metrics, and PostgreSQL +
-> Redis readiness. The phase is marked accepted only after local and remote
-> gates pass.
+> Redis readiness. All local acceptance gates and the committed GitHub Actions
+> workflow pass.
 
 ## Current architecture
 

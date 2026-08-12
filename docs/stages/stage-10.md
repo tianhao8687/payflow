@@ -2,7 +2,7 @@
 
 Date: 2026-08-13
 
-Status: Acceptance pending
+Status: Accepted
 
 Next stage: None; this is the final specified stage
 
@@ -61,7 +61,7 @@ BullMQ Redis integration                           PASS (1 suite, 1 test)
 production build and compiled runtime smoke        PASS
 API / worker Prometheus endpoints                  PASS (HTTP 200)
 responsive browser QA at 320/768/1024/1440         PASS (0 console errors)
-GitHub Actions                                     PENDING
+GitHub Actions                                     PASS (run 31639844093, 2m56s)
 ```
 
 ## 5. Acceptance checklist
@@ -77,10 +77,11 @@ GitHub Actions                                     PENDING
 - [x] Architecture/payment/webhook/reconciliation docs, ADR, observability
       runbook, and ten-minute demo script are usable.
 - [x] Complete local regression, production/runtime, and browser gates pass.
-- [ ] Final committed GitHub Actions run passes.
+- [x] Final committed GitHub Actions run passes (`31639844093`).
 
 ## 6. Phase gate
 
-Stage 10 remains pending until every local gate and the final committed GitHub
-Actions run pass. No later stage exists, and acceptance must not be inferred
-from implementation alone.
+Stage 10 is accepted. Redacted correlated logs, cross-boundary traces, all six
+required metrics, real dependency health checks, portfolio documentation,
+complete local regression/runtime/browser gates, and GitHub Actions all pass.
+This completes the final stage in the prescribed sequence.
