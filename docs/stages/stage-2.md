@@ -2,7 +2,7 @@
 
 Date: 2026-08-12  
 Status: Accepted  
-Next stage: Not started
+Next stage: Stage 3 implementation complete; external gate pending
 
 ## 1. Stage objective
 
@@ -129,4 +129,5 @@ stored under `docs/design`.
 ## 9. Phase gate
 
 Stage 2 passed every acceptance criterion in the implementation specification.
-Stage 3 has not been started.
+Stage 3 implementation has started, but its external Stripe Test gate is still
+pending. This does not alter Stage 2's accepted status.

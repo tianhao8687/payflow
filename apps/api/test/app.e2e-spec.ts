@@ -11,12 +11,55 @@ import { ApiExceptionFilter } from './../src/http/api-exception.filter';
 import { ProductListResponseDto } from './../src/products/dto/product-list-response.dto';
 import { ProductResponseDto } from './../src/products/dto/product-response.dto';
 import { OrderResponseDto } from './../src/orders/dto/order-response.dto';
+import { CheckoutSessionResponseDto } from './../src/payments/dto/payment-response.dto';
+import {
+  type CreateStripeCheckoutInput,
+  type StripeCheckoutResult,
+  StripeCheckoutGateway,
+} from './../src/payments/stripe-checkout.gateway';
 
 interface ErrorResponse {
   code: string;
 }
 
-describe('PayFlow Stage 2 (e2e)', () => {
+class FakeStripeCheckoutGateway {
+  readonly inputs: CreateStripeCheckoutInput[] = [];
+  private readonly sessions = new Map<string, StripeCheckoutResult>();
+
+  isConfigured(): boolean {
+    return true;
+  }
+
+  async createCheckoutSession(
+    input: CreateStripeCheckoutInput,
+  ): Promise<StripeCheckoutResult> {
+    this.inputs.push(input);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    const replay = this.sessions.get(input.idempotencyKey);
+    if (replay) {
+      return replay;
+    }
+
+    const result: StripeCheckoutResult = {
+      amountTotal: input.amount,
+      currency: input.currency,
+      expiresAt: new Date(Date.now() + 86_400_000),
+      paymentIntentId: null,
+      requestId: `req_test_${this.sessions.size + 1}`,
+      sessionId: `cs_test_${this.sessions.size + 1}`,
+      url: `https://checkout.stripe.test/c/payflow_${this.sessions.size + 1}`,
+    };
+    this.sessions.set(input.idempotencyKey, result);
+    return result;
+  }
+
+  get uniqueSessionCount(): number {
+    return this.sessions.size;
+  }
+}
+
+describe('PayFlow Stage 3 (e2e)', () => {
   let app: INestApplication<App>;
   let database: DatabaseService;
   const userEmail = `stage-1-${Date.now()}@example.com`;
@@ -25,11 +68,19 @@ describe('PayFlow Stage 2 (e2e)', () => {
   const otherUserEmail = `stage-2-other-${Date.now()}@example.com`;
   let stageTwoOrderId: string | undefined;
   let stageTwoProductId: string | undefined;
+  let stageTwoOwnerToken: string | undefined;
+  let stageTwoOtherToken: string | undefined;
+  let stageThreeOrderId: string | undefined;
+  let stageThreeRaceOrderId: string | undefined;
+  const fakeStripe = new FakeStripeCheckoutGateway();
 
   beforeAll(async () => {
     const moduleFixture: TestingModule = await Test.createTestingModule({
       imports: [AppModule],
-    }).compile();
+    })
+      .overrideProvider(StripeCheckoutGateway)
+      .useValue(fakeStripe)
+      .compile();
 
     app = moduleFixture.createNestApplication();
     app.useGlobalFilters(new ApiExceptionFilter());
@@ -47,7 +98,7 @@ describe('PayFlow Stage 2 (e2e)', () => {
   it('exposes system and seeded product reads without authentication', async () => {
     await request(app.getHttpServer()).get('/').expect(200).expect({
       service: 'PayFlow API',
-      stage: 2,
+      stage: 3,
       health: '/health',
       docs: '/docs',
     });
@@ -177,11 +228,13 @@ describe('PayFlow Stage 2 (e2e)', () => {
       .send({ email: orderOwnerEmail, password: userPassword })
       .expect(201);
     const owner = ownerRegistration.body as unknown as AuthResponseDto;
+    stageTwoOwnerToken = owner.accessToken;
     const otherRegistration = await request(app.getHttpServer())
       .post('/auth/register')
       .send({ email: otherUserEmail, password: userPassword })
       .expect(201);
     const other = otherRegistration.body as unknown as AuthResponseDto;
+    stageTwoOtherToken = other.accessToken;
 
     const tampered = await request(app.getHttpServer())
       .post('/orders')
@@ -259,10 +312,192 @@ describe('PayFlow Stage 2 (e2e)', () => {
     expect((repeatedCancellation.body as unknown as ErrorResponse).code).toBe(
       'ORDER_TRANSITION_INVALID',
     );
+
+    const checkoutForCancelledOrder = await request(app.getHttpServer())
+      .post('/payments/checkout-session')
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({ orderId: createdOrder.id })
+      .expect(409);
+    expect(
+      (checkoutForCancelledOrder.body as unknown as ErrorResponse).code,
+    ).toBe('ORDER_NOT_PAYABLE');
+    await expect(
+      database.prisma.payment.count({ where: { orderId: createdOrder.id } }),
+    ).resolves.toBe(0);
+  });
+
+  it('reuses one Stripe Checkout operation across concurrent duplicate clicks', async () => {
+    const products = await request(app.getHttpServer())
+      .get('/products')
+      .expect(200);
+    const product = (products.body as unknown as ProductListResponseDto)
+      .items[0];
+    expect(product).toBeDefined();
+
+    expect(stageTwoOwnerToken).toBeDefined();
+    expect(stageTwoOtherToken).toBeDefined();
+
+    const orderCreation = await request(app.getHttpServer())
+      .post('/orders')
+      .set('Authorization', `Bearer ${stageTwoOwnerToken}`)
+      .send({ items: [{ productId: product.id, quantity: 2 }] })
+      .expect(201);
+    const order = orderCreation.body as unknown as OrderResponseDto;
+    stageThreeOrderId = order.id;
+
+    const createCheckout = () =>
+      request(app.getHttpServer())
+        .post('/payments/checkout-session')
+        .set('Authorization', `Bearer ${stageTwoOwnerToken}`)
+        .send({ orderId: order.id })
+        .expect(201);
+    const [firstResult, secondResult] = await Promise.all([
+      createCheckout(),
+      createCheckout(),
+    ]);
+    const first = firstResult.body as unknown as CheckoutSessionResponseDto;
+    const second = secondResult.body as unknown as CheckoutSessionResponseDto;
+
+    expect(first.checkoutUrl).toMatch(/^https:\/\/checkout\.stripe\.test\//);
+    expect(second.checkoutUrl).toBe(first.checkoutUrl);
+    expect(second.payment.id).toBe(first.payment.id);
+    expect(second.payment.providerCheckoutSessionId).toBe(
+      first.payment.providerCheckoutSessionId,
+    );
+    expect(first.payment).toMatchObject({
+      amount: order.totalAmount,
+      currency: order.currency,
+      provider: 'STRIPE',
+      status: 'PENDING',
+    });
+    expect(fakeStripe.uniqueSessionCount).toBe(1);
+    expect(
+      new Set(fakeStripe.inputs.map((input) => input.idempotencyKey)),
+    ).toEqual(new Set([`payment:create:${order.id}:1`]));
+    expect(fakeStripe.inputs[0]).toMatchObject({
+      amount: order.totalAmount,
+      currency: order.currency,
+      lines: order.items.map((item) => ({
+        name: item.nameSnapshot,
+        quantity: item.quantity,
+        sku: item.skuSnapshot,
+        unitAmount: item.unitPriceAmount,
+      })),
+      orderId: order.id,
+      paymentId: first.payment.id,
+    });
+
+    const thirdResult = await createCheckout();
+    const third = thirdResult.body as unknown as CheckoutSessionResponseDto;
+    expect(third).toMatchObject({
+      checkoutUrl: first.checkoutUrl,
+      payment: { id: first.payment.id, status: 'PENDING' },
+      reused: true,
+    });
+    expect(fakeStripe.uniqueSessionCount).toBe(1);
+
+    const localPayments = await database.prisma.payment.findMany({
+      where: { orderId: order.id },
+      include: { attempts: true },
+    });
+    expect(localPayments).toHaveLength(1);
+    expect(localPayments[0]?.attempts.length).toBeGreaterThanOrEqual(1);
+
+    const paymentRead = await request(app.getHttpServer())
+      .get(`/payments/${first.payment.id}`)
+      .set('Authorization', `Bearer ${stageTwoOwnerToken}`)
+      .expect(200);
+    expect(paymentRead.body).toMatchObject({
+      id: first.payment.id,
+      status: 'PENDING',
+    });
+
+    const hiddenPayment = await request(app.getHttpServer())
+      .get(`/payments/${first.payment.id}`)
+      .set('Authorization', `Bearer ${stageTwoOtherToken}`)
+      .expect(404);
+    expect((hiddenPayment.body as unknown as ErrorResponse).code).toBe(
+      'PAYMENT_NOT_FOUND',
+    );
+
+    const orderAfterCheckout = await request(app.getHttpServer())
+      .get(`/orders/${order.id}`)
+      .set('Authorization', `Bearer ${stageTwoOwnerToken}`)
+      .expect(200);
+    expect(orderAfterCheckout.body).toMatchObject({
+      status: 'PENDING_PAYMENT',
+      payments: [
+        expect.objectContaining({ id: first.payment.id, status: 'PENDING' }),
+      ],
+    });
+  });
+
+  it('serializes payment reservation against order cancellation', async () => {
+    const products = await request(app.getHttpServer())
+      .get('/products')
+      .expect(200);
+    const product = (products.body as unknown as ProductListResponseDto)
+      .items[0];
+    expect(product).toBeDefined();
+    expect(stageTwoOwnerToken).toBeDefined();
+
+    const orderCreation = await request(app.getHttpServer())
+      .post('/orders')
+      .set('Authorization', `Bearer ${stageTwoOwnerToken}`)
+      .send({ items: [{ productId: product.id, quantity: 1 }] })
+      .expect(201);
+    const order = orderCreation.body as unknown as OrderResponseDto;
+    stageThreeRaceOrderId = order.id;
+
+    const [checkout, cancellation] = await Promise.all([
+      request(app.getHttpServer())
+        .post('/payments/checkout-session')
+        .set('Authorization', `Bearer ${stageTwoOwnerToken}`)
+        .send({ orderId: order.id }),
+      request(app.getHttpServer())
+        .post(`/orders/${order.id}/cancel`)
+        .set('Authorization', `Bearer ${stageTwoOwnerToken}`),
+    ]);
+
+    expect(
+      [checkout.status, cancellation.status].filter((code) => code === 409),
+    ).toHaveLength(1);
+    expect([200, 201]).toContain(
+      checkout.status === 409 ? cancellation.status : checkout.status,
+    );
+
+    const persisted = await database.prisma.order.findUniqueOrThrow({
+      where: { id: order.id },
+      include: { payments: true },
+    });
+    if (persisted.status === 'CANCELLED') {
+      expect(checkout.status).toBe(409);
+      expect(persisted.payments).toHaveLength(0);
+    } else {
+      expect(persisted.status).toBe('PENDING_PAYMENT');
+      expect(cancellation.status).toBe(409);
+      expect(persisted.payments).toHaveLength(1);
+    }
   });
 
   afterAll(async () => {
     if (database) {
+      if (stageThreeOrderId) {
+        await database.prisma.payment.deleteMany({
+          where: { orderId: stageThreeOrderId },
+        });
+        await database.prisma.order.deleteMany({
+          where: { id: stageThreeOrderId },
+        });
+      }
+      if (stageThreeRaceOrderId) {
+        await database.prisma.payment.deleteMany({
+          where: { orderId: stageThreeRaceOrderId },
+        });
+        await database.prisma.order.deleteMany({
+          where: { id: stageThreeRaceOrderId },
+        });
+      }
       if (stageTwoOrderId) {
         await database.prisma.order.deleteMany({
           where: { id: stageTwoOrderId },

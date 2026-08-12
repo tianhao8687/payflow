@@ -4,6 +4,9 @@ import { PrismaClient } from './generated/prisma/client';
 
 export {
   OrderStatus,
+  PaymentAttemptStatus,
+  PaymentProvider,
+  PaymentStatus,
   Prisma,
   PrismaClient,
   Role,
@@ -11,6 +14,8 @@ export {
 export type {
   Order,
   OrderItem,
+  Payment,
+  PaymentAttempt,
   Product,
   User,
 } from './generated/prisma/client';

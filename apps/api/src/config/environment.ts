@@ -7,6 +7,7 @@ export interface ApiEnvironment {
   JWT_SECRET: string;
   NODE_ENV: NodeEnvironment;
   PORT: number;
+  STRIPE_SECRET_KEY: string;
 }
 
 const allowedNodeEnvironments = new Set<NodeEnvironment>([
@@ -28,6 +29,7 @@ export function validateEnvironment(
   const port = Number(values.PORT ?? 4000);
   const jwtSecret = readString(values, 'JWT_SECRET', '');
   const jwtExpiresInSeconds = Number(values.JWT_EXPIRES_IN_SECONDS ?? 900);
+  const stripeSecretKey = readString(values, 'STRIPE_SECRET_KEY', '');
 
   if (!allowedNodeEnvironments.has(nodeEnvironment as NodeEnvironment)) {
     throw new Error(
@@ -57,6 +59,16 @@ export function validateEnvironment(
     );
   }
 
+  if (
+    stripeSecretKey &&
+    !stripeSecretKey.startsWith('sk_test_') &&
+    !stripeSecretKey.startsWith('rk_test_')
+  ) {
+    throw new Error(
+      'STRIPE_SECRET_KEY must be a Stripe test or sandbox key; live keys are forbidden.',
+    );
+  }
+
   try {
     new URL(appBaseUrl);
   } catch {
@@ -71,6 +83,7 @@ export function validateEnvironment(
     JWT_SECRET: jwtSecret,
     NODE_ENV: nodeEnvironment as NodeEnvironment,
     PORT: port,
+    STRIPE_SECRET_KEY: stripeSecretKey,
   };
 }
 

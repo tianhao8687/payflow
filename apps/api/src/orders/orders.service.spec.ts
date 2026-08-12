@@ -1,4 +1,9 @@
-import { OrderStatus, type Product } from '@payflow/database';
+import {
+  OrderStatus,
+  PaymentProvider,
+  PaymentStatus,
+  type Product,
+} from '@payflow/database';
 
 import type { CreateOrderRequestDto } from './dto/create-order-request.dto';
 import {
@@ -121,6 +126,35 @@ describe('OrdersService', () => {
       status: OrderStatus.CANCELLED,
     });
 
+    const activePaymentOrder: OrderWithItems = {
+      ...pending,
+      payments: [
+        {
+          amount: 1000,
+          attemptNo: 1,
+          checkoutExpiresAt: new Date('2026-08-13T12:00:00.000Z'),
+          checkoutUrl: 'https://checkout.stripe.com/c/test',
+          createdAt: new Date('2026-08-12T12:01:00.000Z'),
+          currency: 'USD',
+          id: '1a109d0d-96c5-4cdd-8829-8a4df60ddcb6',
+          idempotencyKey: `payment:create:${pending.id}:1`,
+          orderId: pending.id,
+          provider: PaymentProvider.STRIPE,
+          providerCheckoutSessionId: 'cs_test_active',
+          providerPaymentId: null,
+          status: PaymentStatus.PENDING,
+          updatedAt: new Date('2026-08-12T12:01:00.000Z'),
+        },
+      ],
+    };
+    repository.cancelPendingOwned.mockClear();
+    repository.findOwnedById.mockResolvedValueOnce(activePaymentOrder);
+    await expect(service.cancel(pending.id, userId)).rejects.toMatchObject({
+      response: { code: 'ORDER_PAYMENT_IN_PROGRESS' },
+      status: 409,
+    });
+    expect(repository.cancelPendingOwned).not.toHaveBeenCalled();
+
     repository.findOwnedById.mockResolvedValueOnce(cancelled);
     await expect(service.cancel(pending.id, userId)).rejects.toMatchObject({
       status: 409,
@@ -143,6 +177,7 @@ function createOrder(
       orderId: 'a1ba6f2f-2de0-4ed3-952f-c485fb98043c',
     })),
     orderNo,
+    payments: [],
     status: OrderStatus.PENDING_PAYMENT,
     subtotalAmount: draft.subtotalAmount,
     totalAmount: draft.totalAmount,

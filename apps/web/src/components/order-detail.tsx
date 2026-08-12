@@ -7,6 +7,7 @@ import { ApiError, apiRequest, formatMoney, type Order } from '@/lib/api';
 
 import { useAuth } from './auth-provider';
 import { OrderStatusBadge } from './order-status-badge';
+import { StripeCheckoutButton } from './stripe-checkout-button';
 
 type DetailState =
   | { status: 'loading' }
@@ -114,6 +115,9 @@ export function OrderDetail({ id }: { id: string }) {
   }
 
   const { order } = state;
+  const hasActivePayment = order.payments.some(
+    (payment) => payment.status !== 'FAILED',
+  );
 
   async function cancelOrder(): Promise<void> {
     if (!token || cancelling) {
@@ -275,14 +279,66 @@ export function OrderDetail({ id }: { id: string }) {
 
           {order.status === 'PENDING_PAYMENT' ? (
             <div className="mt-8 border-t border-[#d7dbe2] pt-6">
-              <button
-                className="min-h-11 rounded-md border border-[#b42335] px-5 font-semibold text-[#8b2635] hover:bg-[#fff0f2] disabled:cursor-wait disabled:opacity-60 focus-visible:outline-3 focus-visible:outline-offset-3 focus-visible:outline-[#0757ff]"
-                disabled={cancelling}
-                onClick={() => void cancelOrder()}
-                type="button"
-              >
-                {cancelling ? 'Cancelling…' : 'Cancel unpaid order'}
-              </button>
+              <div className="flex flex-col items-start gap-4 sm:flex-row sm:items-start sm:justify-between">
+                <div>
+                  <h2 className="text-xl font-bold tracking-[-0.03em]">
+                    Sandbox payment
+                  </h2>
+                  <p className="mt-2 max-w-xl text-sm leading-6 text-[#555b66]">
+                    Stripe hosts the card form. Returning to PayFlow only starts
+                    result confirmation; it never marks the order paid.
+                  </p>
+                  <div className="mt-4">
+                    <StripeCheckoutButton orderId={order.id} />
+                  </div>
+                </div>
+                {hasActivePayment ? (
+                  <p className="max-w-xs border-l-4 border-[#f4a000] bg-[#fff8e5] p-4 text-sm leading-6 text-[#654600]">
+                    Cancellation is locked while a payment attempt is active.
+                  </p>
+                ) : (
+                  <button
+                    className="min-h-11 rounded-md border border-[#b42335] px-5 font-semibold text-[#8b2635] hover:bg-[#fff0f2] disabled:cursor-wait disabled:opacity-60 focus-visible:outline-3 focus-visible:outline-offset-3 focus-visible:outline-[#0757ff]"
+                    disabled={cancelling}
+                    onClick={() => void cancelOrder()}
+                    type="button"
+                  >
+                    {cancelling ? 'Cancelling…' : 'Cancel unpaid order'}
+                  </button>
+                )}
+              </div>
+            </div>
+          ) : null}
+
+          {order.payments.length > 0 ? (
+            <div className="mt-8 border-t border-[#d7dbe2] pt-6">
+              <h2 className="text-xl font-bold tracking-[-0.03em]">
+                Payment attempts
+              </h2>
+              <ul className="mt-4 grid gap-3">
+                {order.payments.map((payment) => (
+                  <li
+                    className="flex flex-col gap-3 border border-[#d7dbe2] p-4 sm:flex-row sm:items-center sm:justify-between"
+                    key={payment.id}
+                  >
+                    <div>
+                      <p className="font-mono text-xs font-bold tracking-[0.08em] text-[#555b66] uppercase">
+                        {payment.provider} /{' '}
+                        {payment.status.replaceAll('_', ' ')}
+                      </p>
+                      <p className="mt-1 font-bold tabular-nums">
+                        {formatMoney(payment.amount, payment.currency)}
+                      </p>
+                    </div>
+                    <Link
+                      className="inline-flex min-h-10 items-center font-semibold text-[#0757ff] underline decoration-2 underline-offset-4 hover:text-[#003fc7] focus-visible:rounded-sm focus-visible:outline-3 focus-visible:outline-offset-3 focus-visible:outline-[#0757ff]"
+                      href={`/payments/${payment.id}/result`}
+                    >
+                      Check local status
+                    </Link>
+                  </li>
+                ))}
+              </ul>
             </div>
           ) : null}
         </div>

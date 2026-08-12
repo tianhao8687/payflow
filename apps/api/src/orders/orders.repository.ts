@@ -1,5 +1,10 @@
 import { Injectable } from '@nestjs/common';
-import { OrderStatus, Prisma, type Product } from '@payflow/database';
+import {
+  OrderStatus,
+  PaymentStatus,
+  Prisma,
+  type Product,
+} from '@payflow/database';
 
 import { DatabaseService } from '../database/database.service';
 
@@ -23,11 +28,12 @@ export interface OrderDraft {
 }
 
 export type OrderWithItems = Prisma.OrderGetPayload<{
-  include: { items: true };
+  include: { items: true; payments: true };
 }>;
 
 const includeItems = {
   items: { orderBy: { skuSnapshot: 'asc' as const } },
+  payments: { orderBy: { createdAt: 'desc' as const } },
 } as const;
 
 @Injectable()
@@ -85,23 +91,64 @@ export class OrdersRepository {
     id: string,
     userId: string,
   ): Promise<OrderWithItems | null> {
-    return this.database.prisma.$transaction(
-      async (transaction) => {
-        const update = await transaction.order.updateMany({
-          where: { id, status: OrderStatus.PENDING_PAYMENT, userId },
-          data: { status: OrderStatus.CANCELLED },
-        });
+    for (let retry = 0; retry < 3; retry += 1) {
+      try {
+        return await this.database.prisma.$transaction(
+          async (transaction) => {
+            await transaction.$queryRaw(
+              Prisma.sql`SELECT 1::integer AS acquired
+                FROM pg_advisory_xact_lock(hashtextextended(${id}, 0))`,
+            );
 
-        if (update.count !== 1) {
-          return null;
+            const current = await transaction.order.findFirst({
+              where: { id, userId },
+              select: {
+                status: true,
+                payments: {
+                  where: { status: { not: PaymentStatus.FAILED } },
+                  select: { id: true },
+                  take: 1,
+                },
+              },
+            });
+
+            if (
+              !current ||
+              current.status !== OrderStatus.PENDING_PAYMENT ||
+              current.payments.length > 0
+            ) {
+              return null;
+            }
+
+            const update = await transaction.order.updateMany({
+              where: { id, status: OrderStatus.PENDING_PAYMENT, userId },
+              data: { status: OrderStatus.CANCELLED },
+            });
+
+            if (update.count !== 1) {
+              return null;
+            }
+
+            return transaction.order.findFirst({
+              where: { id, userId },
+              include: includeItems,
+            });
+          },
+          { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+        );
+      } catch (error: unknown) {
+        if (
+          error instanceof Prisma.PrismaClientKnownRequestError &&
+          error.code === 'P2034' &&
+          retry < 2
+        ) {
+          continue;
         }
 
-        return transaction.order.findFirst({
-          where: { id, userId },
-          include: includeItems,
-        });
-      },
-      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
-    );
+        throw error;
+      }
+    }
+
+    throw new Error('Order cancellation retry limit was exhausted.');
   }
 }

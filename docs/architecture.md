@@ -1,10 +1,10 @@
 # PayFlow architecture
 
-## Current boundary: Stage 2
+## Current boundary: Stage 3 implementation, external gate pending
 
-Stage 2 adds the customer order aggregate, server-authoritative totals, immutable
-item snapshots, ownership isolation, and pending-order cancellation without
-crossing into the Stage 3 payment domain.
+Stage 3 adds the separate payment aggregate, Stripe-hosted Test Checkout, stable
+provider idempotency, and local payment-status UI. The external hosted-page gate
+is pending, so Stage 4 webhook processing has not begun.
 
 ```mermaid
 flowchart TB
@@ -20,6 +20,8 @@ flowchart TB
     Users[Users repository]
     Products[Products module]
     Orders[Orders module + state machine]
+    Payments[Payments module + state machine]
+    StripeGateway[Stripe Checkout gateway]
     Guards[JWT guard + roles guard]
     System[System and health module]
     DatabaseModule[Database module]
@@ -33,6 +35,7 @@ flowchart TB
   Catalog -->|public GET| Products
   Cart -->|product IDs + quantities| Guards
   Guards --> Orders
+  Guards --> Payments
   AuthUI -->|register / login| Auth
   AuthUI -->|Bearer JWT| Guards
   AdminUI -->|Bearer JWT + ADMIN| Guards
@@ -40,6 +43,8 @@ flowchart TB
   Auth --> Users
   Products --> DatabaseModule
   Orders --> DatabaseModule
+  Payments --> DatabaseModule
+  Payments --> StripeGateway --> Stripe[Stripe Test hosted Checkout]
   Users --> DatabaseModule
   System --> DatabaseModule
   DatabaseModule --> Prisma --> Postgres
@@ -90,6 +95,22 @@ flowchart TB
   Stage 2 exposes only `PENDING_PAYMENT → CANCELLED`; later transitions remain
   inaccessible until their specified stages.
 
+## Stage 3 payment boundary
+
+- `POST /payments/checkout-session` accepts only an owned order ID. Local item
+  snapshots and totals supply Stripe's Checkout line items.
+- `Payment` is separate from `Order`; it stores the order amount/currency,
+  provider state, attempt number, Checkout references, and a stable idempotency
+  key before any third-party request.
+- Payment reservation and pending-order cancellation take the same transaction-
+  scoped PostgreSQL advisory lock. Serializable retries are bounded.
+- Provider calls occur outside database transactions and have individual
+  `PaymentAttempt` audit rows. Stripe results are checked against local amount
+  and currency before the explicit `CREATED → PENDING` transition.
+- The result page reads the protected local API and ignores redirect query data.
+  A browser return cannot mark an order paid; Stage 4 webhook handling will be
+  the final authority.
+
 ## Data boundary
 
 `users` stores UUID identity, normalized unique email, bcrypt password hash,
@@ -97,7 +118,9 @@ role, and timestamp. `products` stores UUID, SKU, display name, integer
 minor-unit price, three-letter currency, stock, and active state. `orders`
 stores ownership, display number, state, currency, integer totals, and creation
 time. `order_items` stores the product reference plus immutable SKU, name, unit
-price, quantity, and line-total snapshots. PostgreSQL checks enforce lowercase
+price, quantity, and line-total snapshots. `payments` stores provider lifecycle,
+amount, idempotency, and Checkout references; `payment_attempts` records provider
+calls. PostgreSQL checks enforce lowercase
 emails, nonnegative money/stock, positive item quantities, arithmetic equality,
 and uppercase three-letter currency.
 
@@ -115,7 +138,6 @@ The API validates environment variables at startup. Request IDs and the shared
 
 ## Deferred boundaries
 
-- Stripe checkout and payment records — Stage 3.
 - Webhooks — Stage 4.
 - Refund operations and the admin business console — Stage 5.
 - `apps/worker`, Redis/BullMQ, provider packages, outbox, ledger, and

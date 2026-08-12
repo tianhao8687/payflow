@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { OrderStatus } from '@payflow/database';
+import { OrderStatus, PaymentProvider, PaymentStatus } from '@payflow/database';
 
 export class OrderItemResponseDto {
   @ApiProperty({ format: 'uuid' })
@@ -22,6 +22,26 @@ export class OrderItemResponseDto {
 
   @ApiProperty({ example: 6800 })
   lineTotalAmount!: number;
+}
+
+export class OrderPaymentSummaryResponseDto {
+  @ApiProperty({ format: 'uuid' })
+  id!: string;
+
+  @ApiProperty({ enum: PaymentProvider })
+  provider!: PaymentProvider;
+
+  @ApiProperty({ enum: PaymentStatus })
+  status!: PaymentStatus;
+
+  @ApiProperty({ description: 'Integer amount in the currency minor unit.' })
+  amount!: number;
+
+  @ApiProperty({ example: 'USD' })
+  currency!: string;
+
+  @ApiProperty({ format: 'date-time' })
+  createdAt!: string;
 }
 
 export class OrderResponseDto {
@@ -51,4 +71,7 @@ export class OrderResponseDto {
 
   @ApiProperty({ type: [OrderItemResponseDto] })
   items!: OrderItemResponseDto[];
+
+  @ApiProperty({ type: [OrderPaymentSummaryResponseDto] })
+  payments!: OrderPaymentSummaryResponseDto[];
 }

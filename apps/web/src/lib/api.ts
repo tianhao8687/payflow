@@ -40,6 +40,25 @@ export type OrderStatus =
   | 'PARTIALLY_REFUNDED'
   | 'REFUNDED';
 
+export type PaymentProvider = 'STRIPE';
+export type PaymentStatus =
+  | 'CREATED'
+  | 'PENDING'
+  | 'PROCESSING'
+  | 'SUCCEEDED'
+  | 'FAILED'
+  | 'PARTIALLY_REFUNDED'
+  | 'REFUNDED';
+
+export interface OrderPaymentSummary {
+  id: string;
+  provider: PaymentProvider;
+  status: PaymentStatus;
+  amount: number;
+  currency: string;
+  createdAt: string;
+}
+
 export interface OrderItem {
   id: string;
   productId: string;
@@ -60,11 +79,34 @@ export interface Order {
   totalAmount: number;
   createdAt: string;
   items: OrderItem[];
+  payments: OrderPaymentSummary[];
 }
 
 export interface OrderListResponse {
   count: number;
   items: Order[];
+}
+
+export interface PaymentRecord {
+  id: string;
+  orderId: string;
+  provider: PaymentProvider;
+  status: PaymentStatus;
+  amount: number;
+  currency: string;
+  providerPaymentId: string | null;
+  providerCheckoutSessionId: string | null;
+  attemptNo: number;
+  providerCallCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CheckoutSessionResponse {
+  checkoutUrl: string;
+  expiresAt: string;
+  payment: PaymentRecord;
+  reused: boolean;
 }
 
 interface ApiErrorPayload {

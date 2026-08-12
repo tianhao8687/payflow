@@ -4,22 +4,25 @@ PayFlow is a full-stack payment-system portfolio project implemented one
 acceptance-gated stage at a time from the accompanying Codex implementation
 specification.
 
-> Current delivery: **Stage 2 — Order (accepted)**. Payment collection,
-> webhooks, refunds, and the Stage 5 admin business console remain intentionally
-> unimplemented.
+> Current delivery: **Stage 3 — Stripe Payment (external gate pending)**. The
+> implementation and local gates pass, but a real Stripe Test hosted page must
+> open before Stage 3 is accepted or Stage 4 webhook work begins.
 
-## Stage 2 architecture
+## Current architecture
 
 ```mermaid
 flowchart LR
   Browser[Next.js web :3000] -->|public reads| Products[NestJS products API]
   Browser -->|register / login| Auth[NestJS auth API]
   Browser -->|cart IDs + quantities| Orders[NestJS orders API]
+  Browser -->|order ID| Payments[NestJS payments API]
+  Payments -->|hosted Checkout + stable key| Stripe[Stripe Test]
   Browser -->|Bearer JWT| Protected[Protected API boundary]
   Protected --> RBAC{USER or ADMIN}
   Auth --> DB[(PostgreSQL :5432)]
   Products --> DB
   Orders -->|server price + snapshot transaction| DB
+  Payments -->|Payment + provider attempts| DB
   RBAC --> DB
   Auth --> Docs[OpenAPI /docs]
 ```
@@ -79,20 +82,22 @@ Stop services without deleting database data:
 docker compose down
 ```
 
-## Stage 2 API
+## Current API
 
-| Method | Path                 | Access | Purpose                           |
-| ------ | -------------------- | ------ | --------------------------------- |
-| POST   | `/auth/register`     | Public | Create a USER and issue a JWT     |
-| POST   | `/auth/login`        | Public | Verify credentials and issue JWT  |
-| GET    | `/auth/me`           | JWT    | Return the safe current-user DTO  |
-| GET    | `/products`          | Public | List active products              |
-| GET    | `/products/:id`      | Public | Read one active product           |
-| GET    | `/admin/profile`     | ADMIN  | Verify the administrator boundary |
-| POST   | `/orders`            | JWT    | Create a server-priced order      |
-| GET    | `/orders`            | JWT    | List current user's orders        |
-| GET    | `/orders/:id`        | JWT    | Read an owned order and snapshots |
-| POST   | `/orders/:id/cancel` | JWT    | Cancel an owned pending order     |
+| Method | Path                         | Access | Purpose                              |
+| ------ | ---------------------------- | ------ | ------------------------------------ |
+| POST   | `/auth/register`             | Public | Create a USER and issue a JWT        |
+| POST   | `/auth/login`                | Public | Verify credentials and issue JWT     |
+| GET    | `/auth/me`                   | JWT    | Return the safe current-user DTO     |
+| GET    | `/products`                  | Public | List active products                 |
+| GET    | `/products/:id`              | Public | Read one active product              |
+| GET    | `/admin/profile`             | ADMIN  | Verify the administrator boundary    |
+| POST   | `/orders`                    | JWT    | Create a server-priced order         |
+| GET    | `/orders`                    | JWT    | List current user's orders           |
+| GET    | `/orders/:id`                | JWT    | Read an owned order and snapshots    |
+| POST   | `/orders/:id/cancel`         | JWT    | Cancel an owned pending order        |
+| POST   | `/payments/checkout-session` | JWT    | Create or reuse Stripe Test Checkout |
+| GET    | `/payments/:id`              | JWT    | Read an owned local payment          |
 
 Public registration cannot choose a role. Order creation accepts only product
 IDs and quantities; any client price field is rejected, and accepted totals are
@@ -116,6 +121,10 @@ Set the database, JWT, and seed variables from the example files in the current
 shell before migration, seed, or API commands. Real `.env` files are ignored by
 Git.
 
+Stripe Checkout is disabled safely until `STRIPE_SECRET_KEY` is set to a test or
+sandbox key (`sk_test_...` or `rk_test_...`). Live keys are rejected. Never
+commit or paste a secret key into source or documentation.
+
 ## Quality gates
 
 Run static checks, unit tests, and production builds:
@@ -124,7 +133,7 @@ Run static checks, unit tests, and production builds:
 pnpm run ci
 ```
 
-Run the database-backed Stage 2 acceptance suite after migration and seed:
+Run the database-backed acceptance suite after migration and seed:
 
 ```powershell
 pnpm db:migrate:deploy
@@ -133,7 +142,7 @@ pnpm test:e2e
 ```
 
 The GitHub Actions workflow starts PostgreSQL 18 and performs both groups. Full
-evidence is recorded in [`docs/stages/stage-2.md`](docs/stages/stage-2.md).
+evidence is recorded in [`docs/stages/stage-3.md`](docs/stages/stage-3.md).
 
 ## Workspace layout
 

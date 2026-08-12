@@ -7,12 +7,13 @@ import {
   NotFoundException,
   UnprocessableEntityException,
 } from '@nestjs/common';
-import { OrderStatus, type Product } from '@payflow/database';
+import { OrderStatus, PaymentStatus, type Product } from '@payflow/database';
 
 import { CreateOrderRequestDto } from './dto/create-order-request.dto';
 import { OrderListResponseDto } from './dto/order-list-response.dto';
 import {
   OrderItemResponseDto,
+  OrderPaymentSummaryResponseDto,
   OrderResponseDto,
 } from './dto/order-response.dto';
 import { assertOrderTransition } from './order-state-machine';
@@ -62,6 +63,16 @@ export class OrdersService {
 
   async cancel(id: string, userId: string): Promise<OrderResponseDto> {
     const order = await this.findOwnedOrder(id, userId);
+
+    if (
+      order.payments.some((payment) => payment.status !== PaymentStatus.FAILED)
+    ) {
+      throw new ConflictException({
+        code: 'ORDER_PAYMENT_IN_PROGRESS',
+        message:
+          'An active payment attempt prevents cancellation of this order.',
+      });
+    }
 
     try {
       assertOrderTransition(order.status, OrderStatus.CANCELLED);
@@ -226,6 +237,16 @@ export class OrdersService {
         unitPriceAmount: item.unitPriceAmount,
       })),
       orderNo: order.orderNo,
+      payments: order.payments.map(
+        (payment): OrderPaymentSummaryResponseDto => ({
+          amount: payment.amount,
+          createdAt: payment.createdAt.toISOString(),
+          currency: payment.currency,
+          id: payment.id,
+          provider: payment.provider,
+          status: payment.status,
+        }),
+      ),
       status: order.status,
       subtotalAmount: order.subtotalAmount,
       totalAmount: order.totalAmount,
