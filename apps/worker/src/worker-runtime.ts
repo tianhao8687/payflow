@@ -1,4 +1,16 @@
-import { WebhookEventStatus, type PrismaClient } from '@payflow/database';
+import {
+  PaymentStatus,
+  RefundStatus,
+  WebhookEventStatus,
+  type PrismaClient,
+} from '@payflow/database';
+import {
+  JsonLogger,
+  recordPaymentFailure,
+  recordPaymentSuccess,
+  recordRefundFailure,
+  recordWebhookProcessing,
+} from '@payflow/observability';
 import { PaymentProviderRegistry } from '@payflow/payment-core';
 import {
   isRetryableWebhookError,
@@ -14,6 +26,7 @@ import {
 
 export function startWebhookWorker(options: {
   concurrency?: number;
+  logger?: JsonLogger;
   prefix?: string;
   prisma: PrismaClient;
   providers: PaymentProviderRegistry;
@@ -24,6 +37,9 @@ export function startWebhookWorker(options: {
   return createWebhookWorker(
     options.redisUrl,
     async (job: WebhookJob): Promise<void> => {
+      const startedAt = performance.now();
+      let outcome = 'error';
+      let provider = 'unknown';
       await store.beginAttempt(job.data.webhookEventId);
 
       try {
@@ -31,11 +47,37 @@ export function startWebhookWorker(options: {
           job.data.webhookEventId,
           options.providers,
         );
+        provider = result.correlation.provider;
+        outcome = result.status;
         if (result.status === WebhookEventStatus.FAILED) {
           throw new PermanentWebhookError(
             'Webhook failed local integrity or state-machine checks.',
           );
         }
+        if (result.transition?.changed) {
+          if (
+            result.transition.kind === 'PAYMENT' &&
+            result.transition.status === PaymentStatus.SUCCEEDED
+          ) {
+            recordPaymentSuccess({ provider });
+          } else if (
+            result.transition.kind === 'PAYMENT' &&
+            result.transition.status === PaymentStatus.FAILED
+          ) {
+            recordPaymentFailure({ provider });
+          } else if (
+            result.transition.kind === 'REFUND' &&
+            result.transition.status === RefundStatus.FAILED
+          ) {
+            recordRefundFailure({ provider });
+          }
+        }
+        options.logger?.info('webhook.processing.completed', {
+          ...result.correlation,
+          changed: result.transition?.changed ?? false,
+          status: result.status,
+          transition: result.transition?.status ?? null,
+        });
       } catch (error: unknown) {
         const retryable = isRetryableWebhookError(error);
         const attempts = job.opts.attempts ?? 1;
@@ -48,6 +90,11 @@ export function startWebhookWorker(options: {
         throw error instanceof Error
           ? error
           : new Error('Unknown retryable webhook processing error.');
+      } finally {
+        recordWebhookProcessing((performance.now() - startedAt) / 1_000, {
+          outcome,
+          provider,
+        });
       }
     },
     { concurrency: options.concurrency, prefix: options.prefix },

@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { WebhookEventStatus } from '@payflow/database';
 import { type VerifiedWebhookEvent } from '@payflow/payment-core';
 import { WebhookEventStore } from '@payflow/payment-domain';
+import { recordWebhookDuplicate } from '@payflow/observability';
 
 import { DatabaseService } from '../database/database.service';
 import { WebhookQueueService } from '../queue/webhook-queue.service';
@@ -27,6 +28,9 @@ export class WebhooksRepository {
     event: VerifiedWebhookEvent,
   ): Promise<WebhookProcessingResult> {
     const receipt = await this.store.receive(event);
+    if (receipt.duplicate) {
+      recordWebhookDuplicate({ provider: event.provider });
+    }
     if (!receipt.enqueue) {
       return {
         duplicate: receipt.duplicate,

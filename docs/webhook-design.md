@@ -20,15 +20,18 @@ and raw signatures are never logged.
 ```mermaid
 flowchart TD
   Request[Raw Stripe or PayPal request] --> Verify{Provider verification valid?}
+  Request -. requestId + traceId .-> Trace[OpenTelemetry request span]
   Verify -->|No| Reject[400 or 503; no persistence]
   Verify -->|Yes| EventLock[Event advisory lock]
   EventLock --> Existing{provider_event_id exists?}
   Existing -->|Yes| Delivery[Increment delivery count]
   Existing -->|No| Persist[Insert verified payload + normalized action]
   Persist --> Enqueue[Enqueue DB event UUID as BullMQ job ID]
+  Trace -. inject traceparent .-> Enqueue
   Delivery --> Enqueue
   Enqueue --> Accepted[Record job ID/time; return 200]
   Accepted --> Worker[Worker starts attempt]
+  Enqueue -. extract parent context .-> Worker
   Worker --> Action{Normalized action}
   Action -->|Unknown/stale| Ignore[Mark IGNORED]
   Action -->|PayPal approval| Capture[Idempotent provider capture]
@@ -94,3 +97,13 @@ queues signed/verified provider-shaped events, runs the actual worker, injects
 one transient PayPal capture failure, then proves two attempts, final paid
 state, and ADMIN queue visibility. A real Redis integration test independently
 proves BullMQ retry and retained attempt telemetry.
+
+## Stage 10 telemetry
+
+Every accepted request has a response `x-request-id` and a JSON completion log.
+Verified provider identity/event identity and available order/payment/refund IDs
+enrich the same context without logging signatures or payload credentials.
+Duplicate authenticated deliveries increment `webhook_duplicate_total`. Every
+worker attempt records `webhook_processing_seconds`; payment/refund counters
+increment only when the locked projection actually changes state, so queue
+replay does not inflate business outcomes. See `docs/observability.md`.

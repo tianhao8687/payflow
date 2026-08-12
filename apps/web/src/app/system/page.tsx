@@ -13,15 +13,15 @@ export default function SystemPage() {
       <section className="mx-auto grid max-w-[1536px] gap-14 px-5 py-14 sm:px-8 sm:py-20 lg:items-center lg:px-16 lg:py-24 xl:grid-cols-[0.9fr_1.1fr] xl:gap-12">
         <div className="max-w-[680px]">
           <p className="font-mono text-xs font-bold tracking-[0.15em] text-[#0757ff] uppercase">
-            Stage 08 / Runtime map
+            Stage 10 / Runtime + telemetry
           </p>
           <h1 className="mt-5 text-[clamp(3rem,6vw,5.5rem)] leading-[0.91] font-bold tracking-[-0.07em]">
             Explicit state, visible boundaries.
           </h1>
           <p className="mt-7 max-w-[590px] text-lg leading-8 text-[#555b66]">
-            Web, API, PostgreSQL, Redis, BullMQ Worker, Stripe, and PayPal now
-            cross explicit provider and queue boundaries. Verified webhooks are
-            durable before asynchronous business-state transitions begin.
+            Web, API, PostgreSQL, Redis, BullMQ Worker, Stripe, and PayPal cross
+            explicit provider and queue boundaries. JSON logs, Prometheus
+            metrics, and correlated traces make each durable transition visible.
           </p>
         </div>
         <SystemFlow />

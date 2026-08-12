@@ -12,6 +12,12 @@ import {
   PaymentProviderError,
   PaymentProviderRegistry,
 } from '@payflow/payment-core';
+import {
+  enrichCorrelation,
+  setActiveSpanAttributes,
+  SpanKind,
+  withSpan,
+} from '@payflow/observability';
 
 import { WebhookResponseDto } from './dto/webhook-response.dto';
 import { WebhooksRepository } from './webhooks.repository';
@@ -46,6 +52,8 @@ export class WebhooksService {
     headers: Readonly<Record<string, string | undefined>>,
   ): Promise<WebhookResponseDto> {
     const provider = this.providerFor(providerName);
+    enrichCorrelation({ provider: providerName });
+    setActiveSpanAttributes({ 'payment.provider': providerName });
     if (
       !provider ||
       !provider.isConfigured(PaymentProviderCapability.WEBHOOK)
@@ -68,10 +76,29 @@ export class WebhooksService {
     }
 
     try {
-      const event = await provider.verifyWebhook({
-        headers,
-        rawBody,
-        signature,
+      const event = await withSpan(
+        'provider.webhook.verify',
+        {
+          attributes: { 'payment.provider': providerName },
+          kind: SpanKind.CLIENT,
+        },
+        () => provider.verifyWebhook({ headers, rawBody, signature }),
+      );
+      const correlation = correlationFromAction(event.action);
+      enrichCorrelation({
+        ...correlation,
+        provider: event.provider,
+        providerEventId: event.providerEventId,
+      });
+      setActiveSpanAttributes({
+        'payment.provider': event.provider,
+        'payment.provider_event_id': event.providerEventId,
+        ...(correlation.orderId
+          ? { 'payflow.order.id': correlation.orderId }
+          : {}),
+        ...(correlation.paymentId
+          ? { 'payflow.payment.id': correlation.paymentId }
+          : {}),
       });
       const result = await this.webhooksRepository.processProviderEvent(event);
 
@@ -108,4 +135,17 @@ export class WebhooksService {
       message: `${provider} webhook signature verification failed.`,
     });
   }
+}
+
+function correlationFromAction(action: {
+  kind: string;
+  orderId?: string | null;
+  paymentId?: string | null;
+  refundId?: string;
+}) {
+  return {
+    ...(action.orderId ? { orderId: action.orderId } : {}),
+    ...(action.paymentId ? { paymentId: action.paymentId } : {}),
+    ...(action.refundId ? { refundId: action.refundId } : {}),
+  };
 }

@@ -1,6 +1,6 @@
 # PayFlow payment flow
 
-## Authoritative path through Stage 9
+## Authoritative path through Stage 10
 
 ```mermaid
 sequenceDiagram
@@ -12,6 +12,7 @@ sequenceDiagram
   participant Q as Redis / BullMQ
   participant W as Webhook worker
   participant A as ADMIN browser
+  participant O as OpenTelemetry backend
 
   U->>API: POST /orders (productId + quantity)
   API->>DB: Reprice and persist immutable snapshots
@@ -29,9 +30,11 @@ sequenceDiagram
   R-->>API: VerifiedWebhookEvent + normalized action
   API->>DB: Persist/deduplicate RECEIVED event
   API->>Q: Enqueue WebhookEvent UUID
+  Note over API,Q: Inject W3C trace context into job data
   API->>DB: Record queue job ID/time
   API-->>P: 200 accepted (business processing not awaited)
   Q->>W: Deliver job
+  Note over Q,W: Extract parent context; continue the same trace
   W->>DB: Increment processing attempt and load action
   opt PayPal CHECKOUT.ORDER.APPROVED
     W->>R: capturePayment with stable key
@@ -59,6 +62,8 @@ sequenceDiagram
   API-->>A: Outbox, balanced ledger, runs, and differences
   A->>API: PATCH /admin/reconciliation/issues/:id/resolve
   API->>DB: Resolve once + append ADMIN audit
+  API-->>O: Optional OTLP traces; JSON logs + :9464 metrics
+  W-->>O: Optional OTLP traces; JSON logs + :9465 metrics
 ```
 
 The browser never submits a price. A provider redirect is not proof of payment,

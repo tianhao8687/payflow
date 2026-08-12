@@ -4,11 +4,11 @@ PayFlow is a full-stack payment-system portfolio project implemented one
 acceptance-gated stage at a time from the accompanying Codex implementation
 specification.
 
-> Current delivery: **Stage 9 — Outbox + Ledger + Reconciliation (accepted)**.
-> Successful money-state transitions append a transactional outbox, the worker
-> posts database-enforced balanced ledger pairs, and scheduled provider
-> reconciliation exposes audited differences to ADMIN. All local and remote
-> Stage 9 gates pass; Stage 10 may begin.
+> Current delivery: **Stage 10 — Observability + Portfolio (acceptance pending)**.
+> The complete sandbox payment flow now emits redacted JSON logs, correlated
+> OpenTelemetry traces, six low-cardinality payment metrics, and PostgreSQL +
+> Redis readiness. The phase is marked accepted only after local and remote
+> gates pass.
 
 ## Current architecture
 
@@ -47,6 +47,12 @@ flowchart LR
   FailureLab[Stage 6 Failure Lab] -->|real HTTP boundary| Payments
   FailureLab -->|signed Event replay| Webhooks
   FailureLab -->|fault injection + assertions| DB
+  APITrace[API OpenTelemetry] -. HTTP / DB / provider spans .-> Collector[Optional OTLP backend]
+  WorkerTrace[Worker OpenTelemetry] -. queue / DB / provider spans .-> Collector
+  APITrace --> APIMetrics[Prometheus :9464]
+  WorkerTrace --> WorkerMetrics[Prometheus :9465]
+  Webhooks -. W3C trace context .-> Queue
+  Queue -. parent context .-> WorkerTrace
 ```
 
 The V1 boundary remains a modular monolith. PostgreSQL is the source of truth,
@@ -71,6 +77,29 @@ only asynchronous runtime. NestJS business services never import a provider SDK.
 - Node.js 20.9 or newer (verified with Node 24)
 - pnpm 11.16.0
 - Docker Desktop with Docker Compose v2
+
+## Ten-minute quick start
+
+No provider credential is needed to browse products, sign in, create local
+orders, inspect the ADMIN console, run tests, or inspect health and metrics.
+
+```powershell
+git clone https://github.com/tianhao8687/payflow.git D:\Projects\PayFlow
+Set-Location D:\Projects\PayFlow
+Copy-Item .env.example .env
+docker compose up --build --wait
+```
+
+Open <http://localhost:3000>, then sign in to <http://localhost:3000/admin>
+with `admin@payflow.local` and the sandbox password from `.env`. Confirm
+<http://localhost:4000/health>, <http://localhost:9464/metrics>, and
+<http://localhost:9465/metrics>. On a typical broadband development machine,
+the first image build is the longest step; later starts reuse the build cache.
+
+The committed Compose default password is intentionally sandbox-only. Change
+`JWT_SECRET` and `PAYFLOW_ADMIN_PASSWORD` before retaining or sharing the
+environment. Provider checkout is fail-closed until sandbox credentials are
+added to the ignored `.env`.
 
 ## Start everything with Docker
 
@@ -111,6 +140,8 @@ Services and interfaces:
 - OpenAPI UI: <http://localhost:4000/docs>
 - OpenAPI JSON: <http://localhost:4000/openapi.json>
 - Redis/BullMQ: `localhost:6379` (transport only; no public HTTP interface)
+- API Prometheus metrics: <http://localhost:9464/metrics> (loopback only)
+- Worker Prometheus metrics: <http://localhost:9465/metrics> (loopback only)
 
 Stop services without deleting database data:
 
@@ -187,6 +218,14 @@ Charge read access; a normal test secret key is accepted only as a local sandbox
 fallback. Outbox polling/concurrency and reconciliation interval/lookback are
 documented in [`docs/reconciliation.md`](docs/reconciliation.md).
 
+API and worker traces automatically cover HTTP, Express, PostgreSQL, Redis, and
+outbound provider requests. Queue jobs carry W3C `traceparent`/`tracestate`, so
+one trace continues from API receipt through Redis to the worker. Set
+`OTEL_EXPORTER_OTLP_ENDPOINT` to an OTLP/HTTP collector base URL to export
+traces; leaving it empty keeps the default sandbox self-contained. See
+[`docs/observability.md`](docs/observability.md) for logs, metrics, trace names,
+alerts, and troubleshooting.
+
 Webhook processing also fails closed until `STRIPE_WEBHOOK_SECRET` contains the
 signing secret for the exact Stripe sandbox endpoint. For local forwarding, use
 the official Stripe CLI in a separate terminal:
@@ -234,6 +273,12 @@ $env:RUN_REDIS_INTEGRATION = 'true'
 pnpm test:stage-9
 ```
 
+Run only the Stage 10 observability acceptance:
+
+```powershell
+pnpm test:stage-10
+```
+
 Run only the ten Stage 6 failure scenarios:
 
 ```powershell
@@ -253,10 +298,39 @@ recovery and invariants.
 The GitHub Actions workflow starts PostgreSQL 18 and Redis 8.8, scans tracked
 files for payment secrets, applies every migration, seeds the sandbox, and runs
 both adapter packages, BullMQ retry integration, the API E2E suite, and all ten
-Failure Lab scenarios. Stage 9 implementation/acceptance evidence is recorded
-in [`docs/stages/stage-9.md`](docs/stages/stage-9.md), the financial integrity
-design in [`docs/reconciliation.md`](docs/reconciliation.md), and the provider
-contract in [`docs/provider-adapter.md`](docs/provider-adapter.md).
+Failure Lab scenarios. Stage records live in [`docs/stages`](docs/stages), the
+architecture in [`docs/architecture.md`](docs/architecture.md), the financial
+integrity design in [`docs/reconciliation.md`](docs/reconciliation.md), and the
+provider contract in [`docs/provider-adapter.md`](docs/provider-adapter.md).
+
+## Test strategy and engineering tradeoffs
+
+- Unit and contract suites protect state machines, adapters, logging redaction,
+  exact metric names, and queue trace propagation.
+- PostgreSQL/Redis E2E suites drive the real NestJS boundary, migrations,
+  advisory locks, signed webhook inbox, BullMQ workers, outbox, ledger, and
+  reconciliation. Only outbound provider networks use deterministic fakes.
+- The ten-scenario Failure Lab injects concurrency, timeout, replay, restart,
+  and transaction rollback faults; GitHub Actions repeats the whole boundary.
+- PostgreSQL remains the source of truth. Redis is deliberately transport only,
+  and provider redirects never mutate money state.
+- Trace export is optional so local startup stays small and deterministic;
+  Prometheus pull endpoints and JSON logs work without another container.
+- OpenTelemetry's JavaScript trace/metric APIs are used for stable telemetry;
+  application logs remain explicit JSON so their schema and redaction do not
+  depend on a developing logs SDK.
+
+## Functional screenshots
+
+| Final customer catalog                                                           | ADMIN operations console                                                       |
+| -------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| ![Stage 10 observable payment catalog](docs/design/stage-10-catalog-desktop.png) | ![Stage 10 payment operations console](docs/design/stage-10-admin-desktop.png) |
+
+Mobile verification: ![Stage 10 mobile catalog](docs/design/stage-10-catalog-mobile.png)
+
+The scripted portfolio walkthrough is in
+[`docs/demo-script.md`](docs/demo-script.md); responsive implementation captures
+and design tokens live in [`docs/design`](docs/design).
 
 ## Workspace layout
 
@@ -272,6 +346,7 @@ packages/
   payment-paypal/  PayPal Sandbox Orders/capture/refund adapter
   payment-queue/   Redis/BullMQ queue policy and snapshots
   payment-stripe/  Stripe SDK adapter and contract tests
+  observability/   JSON logs, OTel SDK, trace propagation, and metrics
   shared/     Framework-neutral shared contracts
 docs/
   adr/        Architecture decision records
@@ -280,6 +355,8 @@ docs/
   failure-lab-report.md  Stage 6 fault-injection scenarios and evidence
   provider-adapter.md    Shared Stripe/PayPal contract and mapping
   reconciliation.md     Outbox, ledger, reconciliation, and operations contract
+  observability.md      Logs, traces, metrics, health, and alert runbook
+  demo-script.md        Repeatable ten-minute portfolio walkthrough
   webhook-design.md  Raw-body verification, queue, retry, and worker contract
 infra/
   docker/     Container notes
@@ -297,6 +374,9 @@ bytes for both provider verification paths while keeping the built-in JSON
 parser. Stripe Node 22.5.0 targets API `2026-07-29.dahlia`; Checkout Sessions
 include `integration_identifier` and deliberately omit `payment_method_types`
 so Dashboard-managed dynamic payment methods remain available.
+OpenTelemetry SDK startup occurs before NestJS/worker modules load so HTTP,
+Express, PostgreSQL, Redis, and Undici instrumentation can patch their libraries.
+W3C propagation is serialized explicitly only at the custom BullMQ boundary.
 
 ## Safety boundary
 

@@ -14,6 +14,7 @@
   },
   "dependencies": {
     "@payflow/database": "workspace:*",
+    "@payflow/observability": "workspace:*",
     "@payflow/payment-core": "workspace:*"
   },
   "devDependencies": {

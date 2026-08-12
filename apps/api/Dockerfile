@@ -14,6 +14,7 @@ COPY apps/api/package.json apps/api/package.json
 COPY apps/web/package.json apps/web/package.json
 COPY apps/worker/package.json apps/worker/package.json
 COPY packages/database/package.json packages/database/package.json
+COPY packages/observability/package.json packages/observability/package.json
 COPY packages/payment-core/package.json packages/payment-core/package.json
 COPY packages/payment-domain/package.json packages/payment-domain/package.json
 COPY packages/payment-paypal/package.json packages/payment-paypal/package.json
@@ -34,6 +35,7 @@ COPY . .
 RUN pnpm db:generate \
   && pnpm --filter @payflow/shared build \
   && pnpm --filter @payflow/database build \
+  && pnpm --filter @payflow/observability build \
   && pnpm --filter @payflow/payment-core build \
   && pnpm --filter @payflow/payment-domain build \
   && pnpm --filter @payflow/payment-paypal build \

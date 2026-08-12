@@ -7,6 +7,12 @@ import {
   UnrecoverableError,
   Worker,
 } from 'bullmq';
+import {
+  captureTraceContext,
+  SpanKind,
+  type TraceCarrier,
+  withSpan,
+} from '@payflow/observability';
 
 export const WEBHOOK_QUEUE_NAME = 'payflow-webhooks';
 export const WEBHOOK_JOB_NAME = 'process-webhook';
@@ -16,11 +22,13 @@ export const OUTBOX_JOB_NAME = 'process-outbox-event';
 export const OUTBOX_JOB_ATTEMPTS = 5;
 
 export interface WebhookJobData {
+  traceContext?: TraceCarrier;
   webhookEventId: string;
 }
 
 export interface OutboxJobData {
   outboxEventId: string;
+  traceContext?: TraceCarrier;
 }
 
 export interface WebhookQueueJobView {
@@ -67,15 +75,29 @@ export class PayFlowOutboxQueue {
   }
 
   async enqueue(outboxEventId: string): Promise<string> {
-    const job = await this.queue.add(
-      OUTBOX_JOB_NAME,
-      { outboxEventId },
-      { jobId: outboxEventId },
+    return withSpan(
+      'queue.publish.outbox',
+      {
+        attributes: {
+          'messaging.destination.name': OUTBOX_QUEUE_NAME,
+          'messaging.message.id': outboxEventId,
+          'messaging.operation.name': 'publish',
+          'messaging.system': 'bullmq',
+        },
+        kind: SpanKind.PRODUCER,
+      },
+      async () => {
+        const job = await this.queue.add(
+          OUTBOX_JOB_NAME,
+          { outboxEventId, traceContext: captureTraceContext() },
+          { jobId: outboxEventId },
+        );
+        if (!job.id) {
+          throw new Error('BullMQ did not return an outbox job identifier.');
+        }
+        return job.id;
+      },
     );
-    if (!job.id) {
-      throw new Error('BullMQ did not return an outbox job identifier.');
-    }
-    return job.id;
   }
 
   async ping(): Promise<void> {
@@ -109,15 +131,29 @@ export class PayFlowWebhookQueue {
   }
 
   async enqueue(webhookEventId: string): Promise<string> {
-    const job = await this.queue.add(
-      WEBHOOK_JOB_NAME,
-      { webhookEventId },
-      { jobId: webhookEventId },
+    return withSpan(
+      'queue.publish.webhook',
+      {
+        attributes: {
+          'messaging.destination.name': WEBHOOK_QUEUE_NAME,
+          'messaging.message.id': webhookEventId,
+          'messaging.operation.name': 'publish',
+          'messaging.system': 'bullmq',
+        },
+        kind: SpanKind.PRODUCER,
+      },
+      async () => {
+        const job = await this.queue.add(
+          WEBHOOK_JOB_NAME,
+          { traceContext: captureTraceContext(), webhookEventId },
+          { jobId: webhookEventId },
+        );
+        if (!job.id) {
+          throw new Error('BullMQ did not return a webhook job identifier.');
+        }
+        return job.id;
+      },
     );
-    if (!job.id) {
-      throw new Error('BullMQ did not return a webhook job identifier.');
-    }
-    return job.id;
   }
 
   async ping(): Promise<void> {
@@ -172,7 +208,21 @@ export function createWebhookWorker(
 ): WebhookWorker {
   return new Worker<WebhookJobData, void, typeof WEBHOOK_JOB_NAME>(
     WEBHOOK_QUEUE_NAME,
-    processor,
+    (job) =>
+      withSpan(
+        'queue.process.webhook',
+        {
+          attributes: {
+            'messaging.destination.name': WEBHOOK_QUEUE_NAME,
+            'messaging.message.id': job.data.webhookEventId,
+            'messaging.operation.name': 'process',
+            'messaging.system': 'bullmq',
+          },
+          carrier: job.data.traceContext,
+          kind: SpanKind.CONSUMER,
+        },
+        () => processor(job),
+      ),
     {
       concurrency: options.concurrency ?? 8,
       connection: redisConnection(redisUrl),
@@ -198,7 +248,21 @@ export function createOutboxWorker(
 ): OutboxWorker {
   return new Worker<OutboxJobData, void, typeof OUTBOX_JOB_NAME>(
     OUTBOX_QUEUE_NAME,
-    processor,
+    (job) =>
+      withSpan(
+        'queue.process.outbox',
+        {
+          attributes: {
+            'messaging.destination.name': OUTBOX_QUEUE_NAME,
+            'messaging.message.id': job.data.outboxEventId,
+            'messaging.operation.name': 'process',
+            'messaging.system': 'bullmq',
+          },
+          carrier: job.data.traceContext,
+          kind: SpanKind.CONSUMER,
+        },
+        () => processor(job),
+      ),
     {
       concurrency: options.concurrency ?? 4,
       connection: redisConnection(redisUrl),
@@ -211,7 +275,7 @@ export function unrecoverable(error: unknown): UnrecoverableError {
   return new UnrecoverableError(
     error instanceof Error
       ? error.message
-      : 'Permanent webhook processing failure.',
+      : 'Permanent asynchronous processing failure.',
   );
 }
 

@@ -12,7 +12,7 @@ export class HealthController {
   constructor(private readonly healthService: HealthService) {}
 
   @Get()
-  @ApiOperation({ summary: 'Check API and PostgreSQL readiness' })
+  @ApiOperation({ summary: 'Check API, PostgreSQL, and Redis readiness' })
   @ApiOkResponse({ type: HealthResponseDto })
   check(): Promise<HealthResponseDto> {
     return this.healthService.check();

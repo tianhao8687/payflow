@@ -1,52 +1,45 @@
-import { ValidationPipe } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
-import { NestFactory } from '@nestjs/core';
-import type { NestExpressApplication } from '@nestjs/platform-express';
-import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
-import helmet from 'helmet';
+import {
+  observabilityOptionsFromEnv,
+  startObservability,
+} from '@payflow/observability';
+import { config as loadEnvironment } from 'dotenv';
 
-import { AppModule } from './app.module';
-import type { ApiEnvironment } from './config/environment';
-import { ApiExceptionFilter } from './http/api-exception.filter';
+import { apiLogger } from './observability';
 
-async function bootstrap() {
-  const app = await NestFactory.create<NestExpressApplication>(AppModule, {
-    rawBody: true,
-  });
-  const configService = app.get(ConfigService<ApiEnvironment, true>);
-  const appBaseUrl = configService.get('APP_BASE_URL', { infer: true });
-  const port = configService.get('PORT', { infer: true });
+loadEnvironment({ quiet: true });
 
-  app.use(helmet());
-  app.enableCors({
-    origin: appBaseUrl,
-    credentials: true,
-  });
-  app.enableShutdownHooks();
-  app.useGlobalFilters(new ApiExceptionFilter());
-  app.useGlobalPipes(
-    new ValidationPipe({
-      forbidNonWhitelisted: true,
-      transform: true,
-      whitelist: true,
-    }),
+async function main(): Promise<void> {
+  const telemetry = startObservability(
+    observabilityOptionsFromEnv('payflow-api', process.env),
   );
-
-  const swaggerConfig = new DocumentBuilder()
-    .setTitle('PayFlow API')
-    .setDescription('PayFlow payment system REST API')
-    .setVersion('0.8.0')
-    .addBearerAuth({ bearerFormat: 'JWT', scheme: 'bearer', type: 'http' })
-    .build();
-  const documentFactory = () =>
-    SwaggerModule.createDocument(app, swaggerConfig);
-
-  SwaggerModule.setup('docs', app, documentFactory, {
-    customSiteTitle: 'PayFlow API Docs',
-    jsonDocumentUrl: 'openapi.json',
+  apiLogger.info('observability.started', {
+    metricsUrl: telemetry.metricsUrl,
+    traceExportEnabled: Boolean(
+      process.env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT ??
+      process.env.OTEL_EXPORTER_OTLP_ENDPOINT,
+    ),
   });
 
-  await app.listen(port, '0.0.0.0');
+  try {
+    const { bootstrap } = await import('./bootstrap.js');
+    const app = await bootstrap();
+    let closing = false;
+    const shutdown = async (signal: string): Promise<void> => {
+      if (closing) {
+        return;
+      }
+      closing = true;
+      apiLogger.info('api.shutdown.started', { signal });
+      await app.close();
+      await telemetry.shutdown();
+    };
+    process.once('SIGINT', () => void shutdown('SIGINT'));
+    process.once('SIGTERM', () => void shutdown('SIGTERM'));
+  } catch (error: unknown) {
+    apiLogger.error('api.bootstrap.failed', error);
+    await telemetry.shutdown();
+    process.exitCode = 1;
+  }
 }
 
-void bootstrap();
+void main();

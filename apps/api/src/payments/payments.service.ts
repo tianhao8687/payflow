@@ -20,6 +20,12 @@ import {
   PaymentProviderError,
   PaymentProviderRegistry,
 } from '@payflow/payment-core';
+import {
+  enrichCorrelation,
+  setActiveSpanAttributes,
+  SpanKind,
+  withSpan,
+} from '@payflow/observability';
 
 import type { ApiEnvironment } from '../config/environment';
 import { CreateCheckoutSessionRequestDto } from './dto/create-checkout-session-request.dto';
@@ -106,6 +112,17 @@ export class PaymentsService {
       });
     }
 
+    enrichCorrelation({
+      orderId: reservation.order.id,
+      paymentId: reservation.payment.id,
+      provider: providerName,
+    });
+    setActiveSpanAttributes({
+      'payment.provider': providerName,
+      'payflow.order.id': reservation.order.id,
+      'payflow.payment.id': reservation.payment.id,
+    });
+
     if (reservation.payment.provider !== providerName) {
       throw new ConflictException({
         code: 'PAYMENT_PROVIDER_CONFLICT',
@@ -137,24 +154,36 @@ export class PaymentsService {
     );
 
     try {
-      const result = await paymentProvider.createPayment({
-        amount: reservation.payment.amount,
-        cancelUrl: `${this.appBaseUrl}/orders/${reservation.order.id}?checkout=cancelled`,
-        currency: reservation.payment.currency,
-        idempotencyKey: reservation.payment.idempotencyKey,
-        lines: reservation.order.items.map((item) => ({
-          name: item.nameSnapshot,
-          quantity: item.quantity,
-          sku: item.skuSnapshot,
-          unitAmount: item.unitPriceAmount,
-        })),
-        orderId: reservation.order.id,
-        paymentId: reservation.payment.id,
-        successUrl:
-          providerName === DatabasePaymentProvider.STRIPE
-            ? `${this.appBaseUrl}/payments/${reservation.payment.id}/result?session_id={CHECKOUT_SESSION_ID}`
-            : `${this.appBaseUrl}/payments/${reservation.payment.id}/result?provider=paypal`,
-      });
+      const result = await withSpan(
+        'provider.payment.create',
+        {
+          attributes: {
+            'payment.provider': providerName,
+            'payflow.order.id': reservation.order.id,
+            'payflow.payment.id': reservation.payment.id,
+          },
+          kind: SpanKind.CLIENT,
+        },
+        () =>
+          paymentProvider.createPayment({
+            amount: reservation.payment!.amount,
+            cancelUrl: `${this.appBaseUrl}/orders/${reservation.order.id}?checkout=cancelled`,
+            currency: reservation.payment!.currency,
+            idempotencyKey: reservation.payment!.idempotencyKey,
+            lines: reservation.order.items.map((item) => ({
+              name: item.nameSnapshot,
+              quantity: item.quantity,
+              sku: item.skuSnapshot,
+              unitAmount: item.unitPriceAmount,
+            })),
+            orderId: reservation.order.id,
+            paymentId: reservation.payment!.id,
+            successUrl:
+              providerName === DatabasePaymentProvider.STRIPE
+                ? `${this.appBaseUrl}/payments/${reservation.payment!.id}/result?session_id={CHECKOUT_SESSION_ID}`
+                : `${this.appBaseUrl}/payments/${reservation.payment!.id}/result?provider=paypal`,
+          }),
+      );
 
       if (
         result.amount !== reservation.payment.amount ||

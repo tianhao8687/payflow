@@ -18,6 +18,13 @@ import {
   PaymentProviderRegistry,
   ProviderRefundStatus,
 } from '@payflow/payment-core';
+import {
+  enrichCorrelation,
+  recordRefundFailure,
+  setActiveSpanAttributes,
+  SpanKind,
+  withSpan,
+} from '@payflow/observability';
 
 import type { CreateRefundRequestDto } from './dto/create-refund-request.dto';
 import {
@@ -51,6 +58,11 @@ export class RefundsService {
       });
     }
     const paymentProvider = this.providerFor(providerName);
+    enrichCorrelation({ paymentId, provider: providerName });
+    setActiveSpanAttributes({
+      'payment.provider': providerName,
+      'payflow.payment.id': paymentId,
+    });
 
     if (!paymentProvider) {
       throw new ServiceUnavailableException({
@@ -116,19 +128,40 @@ export class RefundsService {
     }
 
     const refund = reservation.refund;
+    enrichCorrelation({
+      orderId: refund.payment.orderId,
+      refundId: refund.id,
+    });
+    setActiveSpanAttributes({
+      'payflow.order.id': refund.payment.orderId,
+      'payflow.refund.id': refund.id,
+    });
 
     try {
-      const result = await paymentProvider.refundPayment({
-        amount: refund.amount,
-        currency: refund.payment.currency,
-        idempotencyKey: refund.idempotencyKey,
-        orderId: refund.payment.orderId,
-        paymentId: refund.paymentId,
-        providerPaymentId: refund.payment.providerPaymentId!,
-        refundId: refund.id,
-        refundRequestId: refund.refundRequestId,
-      });
-      const updated = await this.refundsRepository.applyProviderResult(
+      const result = await withSpan(
+        'provider.refund.create',
+        {
+          attributes: {
+            'payment.provider': providerName,
+            'payflow.order.id': refund.payment.orderId,
+            'payflow.payment.id': refund.paymentId,
+            'payflow.refund.id': refund.id,
+          },
+          kind: SpanKind.CLIENT,
+        },
+        () =>
+          paymentProvider.refundPayment({
+            amount: refund.amount,
+            currency: refund.payment.currency,
+            idempotencyKey: refund.idempotencyKey,
+            orderId: refund.payment.orderId,
+            paymentId: refund.paymentId,
+            providerPaymentId: refund.payment.providerPaymentId!,
+            refundId: refund.id,
+            refundRequestId: refund.refundRequestId,
+          }),
+      );
+      const mutation = await this.refundsRepository.applyProviderResult(
         refund.id,
         actorId,
         {
@@ -136,22 +169,28 @@ export class RefundsService {
           status: this.localRefundStatus(result.status),
         },
       );
+      if (mutation.changed && mutation.refund.status === RefundStatus.FAILED) {
+        recordRefundFailure({ provider: providerName });
+      }
 
       return {
-        refund: this.toResponse(updated),
+        refund: this.toResponse(mutation.refund),
         reused: !reservation.created,
       };
     } catch (error: unknown) {
       const failure = this.providerFailure(error);
 
       if (!failure.outcomeUnknown) {
-        await this.refundsRepository.recordProviderFailure(
+        const mutation = await this.refundsRepository.recordProviderFailure(
           refund.id,
           actorId,
           failure.code,
           failure.message,
           failure.requestId,
         );
+        if (mutation.changed) {
+          recordRefundFailure({ provider: providerName });
+        }
       }
 
       throw new BadGatewayException({

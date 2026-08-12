@@ -4,9 +4,10 @@ import {
   ExceptionFilter,
   HttpException,
   HttpStatus,
-  Logger,
 } from '@nestjs/common';
 import type { Request, Response } from 'express';
+
+import { apiLogger } from '../observability';
 
 interface ErrorPayload {
   code?: string;
@@ -16,8 +17,6 @@ interface ErrorPayload {
 
 @Catch()
 export class ApiExceptionFilter implements ExceptionFilter {
-  private readonly logger = new Logger(ApiExceptionFilter.name);
-
   catch(exception: unknown, host: ArgumentsHost): void {
     const http = host.switchToHttp();
     const request = http.getRequest<Request & { requestId?: string }>();
@@ -30,16 +29,13 @@ export class ApiExceptionFilter implements ExceptionFilter {
     const requestId = request.requestId ?? 'unknown';
 
     if (status >= 500) {
-      this.logger.error(
-        JSON.stringify({
-          message: 'Unhandled API exception',
-          method: request.method,
-          path: request.url,
-          requestId,
-          status,
-        }),
-        exception instanceof Error ? exception.stack : undefined,
-      );
+      apiLogger.error('api.request.failed', {
+        method: request.method,
+        path: request.url,
+        requestId,
+        status,
+        error: exception,
+      });
     }
 
     response.status(status).json({

@@ -49,6 +49,11 @@ services:
       JWT_EXPIRES_IN_SECONDS: ${JWT_EXPIRES_IN_SECONDS:-900}
       JWT_SECRET: ${JWT_SECRET:-payflow-sandbox-jwt-secret-change-before-production-2026}
       NODE_ENV: production
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      OTEL_METRICS_HOST: 0.0.0.0
+      OTEL_METRICS_PORT: 9464
+      OTEL_SERVICE_NAME: payflow-api
+      OTEL_SERVICE_VERSION: ${OTEL_SERVICE_VERSION:-0.10.0}
       PAYFLOW_ADMIN_EMAIL: ${PAYFLOW_ADMIN_EMAIL:-admin@payflow.local}
       PAYFLOW_ADMIN_PASSWORD: ${PAYFLOW_ADMIN_PASSWORD:-Payflow-Sandbox-Admin-2026!}
       PORT: 4000
@@ -61,6 +66,7 @@ services:
       STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
     ports:
       - '${API_PORT:-4000}:4000'
+      - '127.0.0.1:${API_METRICS_PORT:-9464}:9464'
     depends_on:
       postgres:
         condition: service_healthy
@@ -87,6 +93,11 @@ services:
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-payflow}:${POSTGRES_PASSWORD:-payflow}@postgres:5432/${POSTGRES_DB:-payflow}?schema=public
       NODE_ENV: production
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      OTEL_METRICS_HOST: 0.0.0.0
+      OTEL_METRICS_PORT: 9465
+      OTEL_SERVICE_NAME: payflow-worker
+      OTEL_SERVICE_VERSION: ${OTEL_SERVICE_VERSION:-0.10.0}
       PAYPAL_CLIENT_ID: ${PAYPAL_CLIENT_ID:-}
       PAYPAL_CLIENT_SECRET: ${PAYPAL_CLIENT_SECRET:-}
       PAYPAL_ENV: sandbox
@@ -97,7 +108,11 @@ services:
       RECONCILIATION_LOOKBACK_MS: ${RECONCILIATION_LOOKBACK_MS:-86400000}
       STRIPE_RECONCILIATION_KEY: ${STRIPE_RECONCILIATION_KEY:-}
       WEBHOOK_WORKER_CONCURRENCY: ${WEBHOOK_WORKER_CONCURRENCY:-8}
+    ports:
+      - '127.0.0.1:${WORKER_METRICS_PORT:-9465}:9465'
     depends_on:
+      api:
+        condition: service_healthy
       postgres:
         condition: service_healthy
       redis:

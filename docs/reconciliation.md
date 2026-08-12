@@ -113,6 +113,11 @@ local Payment status. A reconciliation run must discover a
 `STATUS_MISMATCH`; a USER must receive `403`; an ADMIN must see and resolve the
 issue; and repeated resolution must create only one resolution audit event.
 
+Only a newly opened issue increments `reconciliation_issue_total`; a later scan
+that refreshes the same open issue does not inflate the counter. Provider lookup
+is a child span of `reconciliation.run`, and scheduled-run logs contain summary
+counts but never provider credentials or snapshots that could carry secrets.
+
 Run it against local PostgreSQL and Redis:
 
 ```powershell

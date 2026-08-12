@@ -26,7 +26,7 @@ export const PAYPAL_PAYMENT_PROVIDER = Symbol.for(
       ): StripeProvider =>
         new StripeProvider({
           appName: 'PayFlow',
-          appVersion: '0.8.0',
+          appVersion: '0.10.0',
           secretKey: config.get('STRIPE_SECRET_KEY', { infer: true }),
           webhookSecret: config.get('STRIPE_WEBHOOK_SECRET', { infer: true }),
         }),

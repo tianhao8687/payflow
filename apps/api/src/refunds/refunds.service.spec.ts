@@ -66,7 +66,10 @@ describe('RefundsService', () => {
       providerRefundId: 're_test_service',
       status: RefundStatus.SUCCEEDED,
     });
-    repository.applyProviderResult.mockResolvedValue(succeeded);
+    repository.applyProviderResult.mockResolvedValue({
+      changed: true,
+      refund: succeeded,
+    });
 
     await expect(
       service.create('payment-id', 'admin-id', {
@@ -136,9 +139,10 @@ describe('RefundsService', () => {
         false,
       ),
     );
-    repository.recordProviderFailure.mockResolvedValue(
-      refundFixture({ status: RefundStatus.FAILED }),
-    );
+    repository.recordProviderFailure.mockResolvedValue({
+      changed: true,
+      refund: refundFixture({ status: RefundStatus.FAILED }),
+    });
 
     await expect(
       service.create('payment-id', 'admin-id', {

@@ -24,6 +24,7 @@ export interface ProviderRefundSnapshot {
 }
 
 export interface RefundProjectionResult {
+  changed: boolean;
   error: string | null;
   stale: boolean;
   status: RefundStatus | null;
@@ -87,9 +88,15 @@ export async function applyProviderRefundSnapshot(
     try {
       assertRefundTransition(refund.status, snapshot.status);
     } catch {
-      return { error: null, stale: true, status: refund.status };
+      return {
+        changed: false,
+        error: null,
+        stale: true,
+        status: refund.status,
+      };
     }
   }
+  const changed = refund.status !== snapshot.status;
 
   const succeededOther = await transaction.refund.aggregate({
     where: {
@@ -158,7 +165,7 @@ export async function applyProviderRefundSnapshot(
     });
   }
 
-  return { error: null, stale: false, status: snapshot.status };
+  return { changed, error: null, stale: false, status: snapshot.status };
 }
 
 function projectAggregateState(
@@ -211,5 +218,5 @@ function projectAggregateState(
 }
 
 function failure(error: string): RefundProjectionResult {
-  return { error, stale: false, status: null };
+  return { changed: false, error, stale: false, status: null };
 }

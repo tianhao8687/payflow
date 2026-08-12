@@ -1,4 +1,5 @@
 import type { PrismaClient } from '@payflow/database';
+import { JsonLogger, SpanKind, withSpan } from '@payflow/observability';
 import { PaymentProviderRegistry } from '@payflow/payment-core';
 import {
   isRetryableOutboxError,
@@ -21,6 +22,7 @@ export interface IntegrityRuntime {
 }
 
 export function startIntegrityRuntime(options: {
+  logger?: JsonLogger;
   outboxConcurrency?: number;
   outboxPollIntervalMs?: number;
   prefix?: string;
@@ -37,7 +39,12 @@ export function startIntegrityRuntime(options: {
     async (job: OutboxJob): Promise<void> => {
       await store.beginProcessing(job.data.outboxEventId);
       try {
-        await store.postToLedger(job.data.outboxEventId);
+        const result = await store.postToLedger(job.data.outboxEventId);
+        options.logger?.info('outbox.processing.completed', {
+          duplicate: result.duplicate,
+          ledgerTransactionId: result.ledgerTransactionId,
+          outboxEventId: job.data.outboxEventId,
+        });
       } catch (error: unknown) {
         const retryable = isRetryableOutboxError(error);
         const final =
@@ -62,10 +69,12 @@ export function startIntegrityRuntime(options: {
   const outboxPublisher = new OutboxPublisher(
     store,
     queue,
+    options.logger,
     options.outboxPollIntervalMs,
   );
   const reconciliationScheduler = new ReconciliationScheduler(
     new ReconciliationService(options.prisma, options.providers),
+    options.logger,
     options.reconciliationIntervalMs,
     options.reconciliationLookbackMs,
   );
@@ -93,6 +102,7 @@ export class OutboxPublisher {
   constructor(
     private readonly store: OutboxEventStore,
     private readonly queue: PayFlowOutboxQueue,
+    private readonly logger?: JsonLogger,
     pollIntervalMs = 500,
   ) {
     this.pollIntervalMs = positiveInterval(pollIntervalMs, 500);
@@ -146,11 +156,16 @@ export class OutboxPublisher {
 
   private async publishScheduled(): Promise<void> {
     try {
-      await this.publishPending();
+      const published = await withSpan(
+        'outbox.publish.batch',
+        { kind: SpanKind.PRODUCER },
+        () => this.publishPending(),
+      );
+      if (published > 0) {
+        this.logger?.info('outbox.publish.completed', { published });
+      }
     } catch (error: unknown) {
-      console.error('PayFlow outbox publisher failed.', {
-        message: error instanceof Error ? error.message : 'Unknown error.',
-      });
+      this.logger?.error('outbox.publisher.failed', { error });
     }
   }
 }
@@ -163,6 +178,7 @@ export class ReconciliationScheduler {
 
   constructor(
     private readonly reconciliation: ReconciliationService,
+    private readonly logger?: JsonLogger,
     intervalMs = 15 * 60 * 1_000,
     lookbackMs = 24 * 60 * 60 * 1_000,
   ) {
@@ -191,14 +207,18 @@ export class ReconciliationScheduler {
     }
     this.active = true;
     try {
-      await this.reconciliation.run({
-        windowEnd: now,
-        windowStart: new Date(now.getTime() - this.lookbackMs),
-      });
+      const result = await withSpan(
+        'reconciliation.run',
+        { kind: SpanKind.INTERNAL },
+        () =>
+          this.reconciliation.run({
+            windowEnd: now,
+            windowStart: new Date(now.getTime() - this.lookbackMs),
+          }),
+      );
+      this.logger?.info('reconciliation.run.completed', { ...result });
     } catch (error: unknown) {
-      console.error('PayFlow reconciliation run failed.', {
-        message: error instanceof Error ? error.message : 'Unknown error.',
-      });
+      this.logger?.error('reconciliation.run.failed', { error });
     } finally {
       this.active = false;
     }

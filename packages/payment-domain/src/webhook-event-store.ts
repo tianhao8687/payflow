@@ -36,12 +36,30 @@ export interface WebhookReceipt {
 }
 
 export interface WebhookProcessingResult {
+  correlation: WebhookCorrelation;
   status: WebhookEventStatus;
+  transition: WebhookTransition | null;
+}
+
+export interface WebhookCorrelation {
+  orderId?: string;
+  paymentId?: string;
+  provider: DatabasePaymentProvider;
+  providerEventId: string;
+  refundId?: string;
+  webhookEventId: string;
+}
+
+export interface WebhookTransition {
+  changed: boolean;
+  kind: 'PAYMENT' | 'REFUND';
+  status: string;
 }
 
 interface WebhookActionResult {
   processingError: string | null;
   status: WebhookEventStatus;
+  transition: WebhookTransition | null;
 }
 
 export class WebhookEventStore {
@@ -146,7 +164,12 @@ export class WebhookEventStore {
   ): Promise<WebhookProcessingResult> {
     const event = await this.prisma.webhookEvent.findUnique({
       where: { id: eventId },
-      select: { actionJson: true, provider: true, status: true },
+      select: {
+        actionJson: true,
+        provider: true,
+        providerEventId: true,
+        status: true,
+      },
     });
 
     if (!event) {
@@ -154,11 +177,17 @@ export class WebhookEventStore {
         'The queued webhook event does not exist.',
       );
     }
+    let action = parseAction(event.actionJson);
+    const correlation = actionCorrelation(
+      eventId,
+      event.provider,
+      event.providerEventId,
+      action,
+    );
     if (event.status !== WebhookEventStatus.RECEIVED) {
-      return { status: event.status };
+      return { correlation, status: event.status, transition: null };
     }
 
-    let action = parseAction(event.actionJson);
     if (action.kind === 'CAPTURE_PAYMENT') {
       action = await this.captureApprovedPayment(
         event.provider,
@@ -167,7 +196,12 @@ export class WebhookEventStore {
       );
     }
 
-    return this.applyAction(eventId, event.provider, action);
+    return this.applyAction(
+      eventId,
+      event.provider,
+      event.providerEventId,
+      action,
+    );
   }
 
   private async captureApprovedPayment(
@@ -233,9 +267,10 @@ export class WebhookEventStore {
   private async applyAction(
     eventId: string,
     provider: DatabasePaymentProvider,
+    providerEventId: string,
     action: ProviderWebhookAction,
   ): Promise<WebhookProcessingResult> {
-    return this.prisma.$transaction(
+    const result = await this.prisma.$transaction(
       async (transaction) => {
         await transaction.$queryRaw(
           Prisma.sql`SELECT 1::integer AS acquired
@@ -246,7 +281,11 @@ export class WebhookEventStore {
           select: { providerEventId: true, status: true },
         });
         if (current.status !== WebhookEventStatus.RECEIVED) {
-          return { status: current.status };
+          return {
+            processingError: null,
+            status: current.status,
+            transition: null,
+          };
         }
 
         let result: WebhookActionResult;
@@ -254,11 +293,13 @@ export class WebhookEventStore {
           result = {
             processingError: action.reason,
             status: WebhookEventStatus.IGNORED,
+            transition: null,
           };
         } else if (action.kind === 'REJECT') {
           result = {
             processingError: action.reason,
             status: WebhookEventStatus.FAILED,
+            transition: null,
           };
         } else if (action.kind === 'REFUND_SYNC') {
           result = await this.processRefund(
@@ -286,10 +327,21 @@ export class WebhookEventStore {
             status: result.status,
           },
         });
-        return { status: result.status };
+        return result;
       },
       { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted },
     );
+
+    return {
+      correlation: actionCorrelation(
+        eventId,
+        provider,
+        providerEventId,
+        action,
+      ),
+      status: result.status,
+      transition: result.transition,
+    };
   }
 
   private async processRefund(
@@ -320,14 +372,27 @@ export class WebhookEventStore {
     }
 
     return projection.error
-      ? { processingError: projection.error, status: WebhookEventStatus.FAILED }
+      ? {
+          processingError: projection.error,
+          status: WebhookEventStatus.FAILED,
+          transition: null,
+        }
       : projection.stale
         ? {
             processingError:
               'The refund event would regress a terminal local state.',
             status: WebhookEventStatus.IGNORED,
+            transition: null,
           }
-        : { processingError: null, status: WebhookEventStatus.PROCESSED };
+        : {
+            processingError: null,
+            status: WebhookEventStatus.PROCESSED,
+            transition: {
+              changed: projection.changed,
+              kind: 'REFUND',
+              status: localStatus,
+            },
+          };
   }
 
   private async processPaymentTransition(
@@ -373,7 +438,8 @@ export class WebhookEventStore {
       );
     }
 
-    if (payment.status !== targetStatus) {
+    const changed = payment.status !== targetStatus;
+    if (changed) {
       try {
         assertPaymentTransition(payment.status, targetStatus);
       } catch (error: unknown) {
@@ -382,6 +448,7 @@ export class WebhookEventStore {
             processingError:
               'The event would regress or skip the local payment state machine.',
             status: WebhookEventStatus.IGNORED,
+            transition: null,
           };
         }
         throw error;
@@ -410,7 +477,7 @@ export class WebhookEventStore {
       }
     }
 
-    if (payment.status !== targetStatus) {
+    if (changed) {
       await transaction.payment.update({
         where: { id: payment.id },
         data: {
@@ -449,7 +516,11 @@ export class WebhookEventStore {
       });
     }
 
-    return { processingError: null, status: WebhookEventStatus.PROCESSED };
+    return {
+      processingError: null,
+      status: WebhookEventStatus.PROCESSED,
+      transition: { changed, kind: 'PAYMENT', status: targetStatus },
+    };
   }
 }
 
@@ -569,7 +640,31 @@ function canRepresentSuccessfulOrder(status: OrderStatus): boolean {
 }
 
 function mismatch(processingError: string): WebhookActionResult {
-  return { processingError, status: WebhookEventStatus.FAILED };
+  return {
+    processingError,
+    status: WebhookEventStatus.FAILED,
+    transition: null,
+  };
+}
+
+function actionCorrelation(
+  webhookEventId: string,
+  provider: DatabasePaymentProvider,
+  providerEventId: string,
+  action: ProviderWebhookAction,
+): WebhookCorrelation {
+  return {
+    provider,
+    providerEventId,
+    webhookEventId,
+    ...('orderId' in action && action.orderId
+      ? { orderId: action.orderId }
+      : {}),
+    ...('paymentId' in action && action.paymentId
+      ? { paymentId: action.paymentId }
+      : {}),
+    ...('refundId' in action ? { refundId: action.refundId } : {}),
+  };
 }
 
 function json(value: unknown): Prisma.InputJsonValue {

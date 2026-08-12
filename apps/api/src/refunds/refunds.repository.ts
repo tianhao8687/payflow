@@ -20,6 +20,11 @@ export type RefundWithPayment = Prisma.RefundGetPayload<{
   include: { payment: { include: { order: true } } };
 }>;
 
+export interface RefundMutationResult {
+  changed: boolean;
+  refund: RefundWithPayment;
+}
+
 export type RefundReservation =
   | { kind: 'NOT_FOUND' }
   | { kind: 'NOT_REFUNDABLE'; status: PaymentStatus }
@@ -185,7 +190,7 @@ export class RefundsRepository {
     refundId: string,
     actorId: string,
     snapshot: ProviderRefundSnapshot,
-  ): Promise<RefundWithPayment> {
+  ): Promise<RefundMutationResult> {
     return this.database.prisma.$transaction(
       async (transaction) => {
         const projection = await applyProviderRefundSnapshot(
@@ -212,10 +217,11 @@ export class RefundsRepository {
           },
         });
 
-        return transaction.refund.findUniqueOrThrow({
+        const refund = await transaction.refund.findUniqueOrThrow({
           where: { id: refundId },
           include: { payment: { include: { order: true } } },
         });
+        return { changed: projection.changed, refund };
       },
       { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted },
     );
@@ -227,7 +233,7 @@ export class RefundsRepository {
     code: string,
     message: string,
     requestId: string | null,
-  ): Promise<RefundWithPayment> {
+  ): Promise<RefundMutationResult> {
     return this.database.prisma.$transaction(async (transaction) => {
       const locator = await transaction.refund.findUniqueOrThrow({
         where: { id: refundId },
@@ -247,7 +253,7 @@ export class RefundsRepository {
       });
 
       if (current.status !== RefundStatus.PENDING) {
-        return current;
+        return { changed: false, refund: current };
       }
 
       assertRefundTransition(current.status, RefundStatus.FAILED);
@@ -273,7 +279,7 @@ export class RefundsRepository {
         },
       });
 
-      return refund;
+      return { changed: true, refund };
     });
   }
 }

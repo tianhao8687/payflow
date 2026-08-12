@@ -13,6 +13,11 @@ import {
   type ProviderPayment,
   ProviderPaymentStatus,
 } from '@payflow/payment-core';
+import {
+  recordReconciliationIssue,
+  SpanKind,
+  withSpan,
+} from '@payflow/observability';
 
 export interface ReconciliationWindow {
   limit?: number;
@@ -98,8 +103,16 @@ export class ReconciliationService {
             );
           }
 
-          providerPayment = await provider.getPayment(
-            payment.providerPaymentId!,
+          providerPayment = await withSpan(
+            'provider.payment.reconcile',
+            {
+              attributes: {
+                'payment.provider': payment.provider,
+                'payflow.payment.id': payment.id,
+              },
+              kind: SpanKind.CLIENT,
+            },
+            () => provider.getPayment(payment.providerPaymentId!),
           );
         } catch (error: unknown) {
           counts.errorCount += 1;
@@ -135,7 +148,7 @@ export class ReconciliationService {
           counts.passedCount += 1;
         } else {
           for (const issueType of issueTypes) {
-            await this.recordIssue({
+            const created = await this.recordIssue({
               checkId: check.id,
               issueType,
               local,
@@ -144,6 +157,12 @@ export class ReconciliationService {
               remote,
               runId: run.id,
             });
+            if (created) {
+              recordReconciliationIssue({
+                issue_type: issueType,
+                provider: payment.provider,
+              });
+            }
             counts.issueCount += 1;
           }
         }
@@ -199,8 +218,8 @@ export class ReconciliationService {
     provider: 'PAYPAL' | 'STRIPE';
     remote: ProviderPaymentSnapshot;
     runId: string;
-  }): Promise<void> {
-    await this.prisma.$transaction(async (transaction) => {
+  }): Promise<boolean> {
+    return this.prisma.$transaction(async (transaction) => {
       await transaction.$queryRaw(
         Prisma.sql`SELECT 1::integer AS acquired
           FROM pg_advisory_xact_lock(hashtextextended(${`reconciliation:${input.paymentId}:${input.issueType}`}, 0))`,
@@ -226,7 +245,7 @@ export class ReconciliationService {
           where: { id: existing.id },
           data: snapshots,
         });
-        return;
+        return false;
       }
 
       const created = await transaction.reconciliationIssue.create({
@@ -252,6 +271,7 @@ export class ReconciliationService {
           targetType: 'RECONCILIATION_ISSUE',
         },
       });
+      return true;
     });
   }
 }

@@ -1,12 +1,12 @@
 # PayFlow architecture
 
-## Current boundary: Stage 9 accepted
+## Current boundary: Stage 10 acceptance pending
 
-Stage 9 extends the existing Stripe/PayPal worker with a transactional outbox,
-an enforced double-entry ledger, and scheduled reconciliation. It does not
-change the locked Order, Payment, Refund, or WebhookEvent ownership rules. The
-NestJS API remains the sole HTTP/business authorization boundary; PostgreSQL
-remains the source of truth.
+Stage 10 adds an observability and portfolio layer around the accepted Stage 9
+system. It does not change the locked Order, Payment, Refund, WebhookEvent,
+outbox, ledger, or reconciliation ownership rules. The NestJS API remains the
+sole HTTP/business authorization boundary; PostgreSQL remains the source of
+truth.
 
 ```mermaid
 flowchart TB
@@ -42,6 +42,13 @@ flowchart TB
 
   Worker[Standalone webhook worker]
   Redis[(Redis / BullMQ)]
+
+  subgraph Observability[Stage 10 observability]
+    JsonLogs[Redacted JSON logs]
+    APIMetrics[API Prometheus :9464]
+    WorkerMetrics[Worker Prometheus :9465]
+    OTLP[Optional OTLP HTTP backend]
+  end
 
   subgraph Data
     Prisma[Prisma client boundary]
@@ -87,6 +94,13 @@ flowchart TB
   Users --> DatabaseModule
   System --> DatabaseModule
   DatabaseModule --> Prisma --> Postgres
+  API -. correlated spans .-> OTLP
+  Worker -. correlated spans .-> OTLP
+  API --> JsonLogs
+  Worker --> JsonLogs
+  API --> APIMetrics
+  Worker --> WorkerMetrics
+  PaymentQueue -. W3C trace context .-> Worker
 ```
 
 ## Locked V1 constraints
@@ -284,6 +298,30 @@ flowchart TB
   latest Charge data. PayPal uses the Sandbox capture lookup and reports an
   unavailable cumulative refund total as `null` rather than a false zero.
 
+## Stage 10 observability boundary
+
+- `@payflow/observability` owns runtime startup, redacted JSON logging, W3C
+  context carriers, manual business spans, and the exact required metrics.
+- API and worker start the OpenTelemetry SDK before importing their application
+  bootstrap, allowing HTTP, Express, PostgreSQL, ioredis, and Undici libraries
+  to be instrumented before use.
+- Each request receives or generates an `x-request-id`. AsyncLocalStorage adds
+  the available request, order, payment, refund, provider, provider-event, and
+  webhook-event identifiers to logs without passing a logger through the domain
+  model.
+- BullMQ jobs persist only standard `traceparent`/`tracestate`; a consumer span
+  extracts that parent, preserving API → Redis → worker continuity across
+  process and retry boundaries.
+- Metrics have bounded provider/outcome/issue-type labels. Counters are emitted
+  only for newly committed state transitions or newly opened issues, preventing
+  idempotent replay from double-counting money outcomes.
+- `/health` awaits real PostgreSQL and Redis probes. Metrics bind to loopback at
+  host level; OTLP export remains optional so the default five-service sandbox
+  stays deterministic.
+- JSON log sanitization recursively redacts secret-shaped values and sensitive
+  keys. Raw webhook signatures, authorization values, provider credentials,
+  passwords, and tokens are never intended telemetry fields.
+
 ## Data boundary
 
 `users` stores UUID identity, normalized unique email, bcrypt password hash,
@@ -321,7 +359,10 @@ Docker Compose starts five services:
 
 The API validates environment variables at startup. Request IDs and the shared
 `code`, `message`, `requestId`, and `details` error envelope remain in force.
+API and worker expose independent Prometheus endpoints on ports 9464 and 9465;
+neither port changes the business API surface.
 
 ## Deferred boundaries
 
-- OpenTelemetry and portfolio packaging — Stage 10.
+- External log/trace/metric storage and alert delivery are deployment choices,
+  not part of the sandbox repository.

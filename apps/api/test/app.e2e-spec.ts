@@ -226,7 +226,7 @@ describe('PayFlow API acceptance through Stage 8 (e2e)', () => {
   it('exposes system and seeded product reads without authentication', async () => {
     await request(app.getHttpServer()).get('/').expect(200).expect({
       service: 'PayFlow API',
-      stage: 8,
+      stage: 10,
       health: '/health',
       docs: '/docs',
     });
