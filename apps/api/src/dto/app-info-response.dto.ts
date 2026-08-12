@@ -4,7 +4,7 @@ export class AppInfoResponseDto {
   @ApiProperty({ example: 'PayFlow API' })
   service!: string;
 
-  @ApiProperty({ example: 1 })
+  @ApiProperty({ example: 4 })
   stage!: number;
 
   @ApiProperty({ example: '/health' })

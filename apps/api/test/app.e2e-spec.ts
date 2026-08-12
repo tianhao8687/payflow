@@ -2,6 +2,7 @@ import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import request from 'supertest';
 import { App } from 'supertest/types';
+import Stripe from 'stripe';
 
 import { AppModule } from './../src/app.module';
 import { AuthResponseDto } from './../src/auth/dto/auth-response.dto';
@@ -17,6 +18,7 @@ import {
   type StripeCheckoutResult,
   StripeCheckoutGateway,
 } from './../src/payments/stripe-checkout.gateway';
+import { WebhookResponseDto } from './../src/webhooks/dto/webhook-response.dto';
 
 interface ErrorResponse {
   code: string;
@@ -59,7 +61,7 @@ class FakeStripeCheckoutGateway {
   }
 }
 
-describe('PayFlow Stage 3 (e2e)', () => {
+describe('PayFlow Stage 4 (e2e)', () => {
   let app: INestApplication<App>;
   let database: DatabaseService;
   const userEmail = `stage-1-${Date.now()}@example.com`;
@@ -71,7 +73,12 @@ describe('PayFlow Stage 3 (e2e)', () => {
   let stageTwoOwnerToken: string | undefined;
   let stageTwoOtherToken: string | undefined;
   let stageThreeOrderId: string | undefined;
+  let stageThreePaymentId: string | undefined;
+  let stageThreeOrderAmount: number | undefined;
+  let stageThreeOrderCurrency: string | undefined;
   let stageThreeRaceOrderId: string | undefined;
+  const webhookEventPrefix = `evt_payflow_stage_4_${Date.now()}`;
+  const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET as string;
   const fakeStripe = new FakeStripeCheckoutGateway();
 
   beforeAll(async () => {
@@ -82,7 +89,7 @@ describe('PayFlow Stage 3 (e2e)', () => {
       .useValue(fakeStripe)
       .compile();
 
-    app = moduleFixture.createNestApplication();
+    app = moduleFixture.createNestApplication({ rawBody: true });
     app.useGlobalFilters(new ApiExceptionFilter());
     app.useGlobalPipes(
       new ValidationPipe({
@@ -98,7 +105,7 @@ describe('PayFlow Stage 3 (e2e)', () => {
   it('exposes system and seeded product reads without authentication', async () => {
     await request(app.getHttpServer()).get('/').expect(200).expect({
       service: 'PayFlow API',
-      stage: 3,
+      stage: 4,
       health: '/health',
       docs: '/docs',
     });
@@ -357,6 +364,9 @@ describe('PayFlow Stage 3 (e2e)', () => {
     ]);
     const first = firstResult.body as unknown as CheckoutSessionResponseDto;
     const second = secondResult.body as unknown as CheckoutSessionResponseDto;
+    stageThreePaymentId = first.payment.id;
+    stageThreeOrderAmount = order.totalAmount;
+    stageThreeOrderCurrency = order.currency;
 
     expect(first.checkoutUrl).toMatch(/^https:\/\/checkout\.stripe\.test\//);
     expect(second.checkoutUrl).toBe(first.checkoutUrl);
@@ -432,6 +442,185 @@ describe('PayFlow Stage 3 (e2e)', () => {
     });
   });
 
+  it('rejects a forged Stripe signature without persisting or changing state', async () => {
+    expect(stageThreeOrderId).toBeDefined();
+    expect(stageThreePaymentId).toBeDefined();
+    expect(stageThreeOrderAmount).toBeDefined();
+    expect(stageThreeOrderCurrency).toBeDefined();
+
+    const eventId = `${webhookEventPrefix}_forged`;
+    const event = paymentIntentEvent(
+      eventId,
+      'payment_intent.succeeded',
+      stageThreePaymentId as string,
+      stageThreeOrderId as string,
+      stageThreeOrderAmount as number,
+      stageThreeOrderCurrency as string,
+    );
+    const response = await sendWebhook(event, 'whsec_wrong_secret').expect(400);
+
+    expect((response.body as unknown as ErrorResponse).code).toBe(
+      'WEBHOOK_SIGNATURE_INVALID',
+    );
+    await expect(
+      database.prisma.webhookEvent.count({
+        where: { providerEventId: eventId },
+      }),
+    ).resolves.toBe(0);
+    await expect(
+      database.prisma.payment.findUniqueOrThrow({
+        where: { id: stageThreePaymentId },
+        select: { status: true },
+      }),
+    ).resolves.toEqual({ status: 'PENDING' });
+  });
+
+  it('atomically applies one legitimate event across five concurrent deliveries', async () => {
+    expect(stageThreeOrderId).toBeDefined();
+    expect(stageThreePaymentId).toBeDefined();
+    expect(stageThreeOrderAmount).toBeDefined();
+    expect(stageThreeOrderCurrency).toBeDefined();
+
+    const eventId = `${webhookEventPrefix}_succeeded`;
+    const event = paymentIntentEvent(
+      eventId,
+      'payment_intent.succeeded',
+      stageThreePaymentId as string,
+      stageThreeOrderId as string,
+      stageThreeOrderAmount as number,
+      stageThreeOrderCurrency as string,
+    );
+    const responses = await Promise.all(
+      Array.from({ length: 5 }, () => sendWebhook(event).expect(200)),
+    );
+    const bodies = responses.map(
+      (response) => response.body as unknown as WebhookResponseDto,
+    );
+
+    expect(bodies.filter((body) => !body.duplicate)).toHaveLength(1);
+    expect(bodies.filter((body) => body.duplicate)).toHaveLength(4);
+    expect(bodies.every((body) => body.status === 'PROCESSED')).toBe(true);
+
+    const persistedEvents = await database.prisma.webhookEvent.findMany({
+      where: { providerEventId: eventId },
+    });
+    expect(persistedEvents).toHaveLength(1);
+    expect(persistedEvents[0]).toMatchObject({
+      eventType: 'payment_intent.succeeded',
+      provider: 'STRIPE',
+      status: 'PROCESSED',
+    });
+    expect(persistedEvents[0]?.processedAt).not.toBeNull();
+
+    await expect(
+      database.prisma.payment.findUniqueOrThrow({
+        where: { id: stageThreePaymentId },
+        select: { providerPaymentId: true, status: true },
+      }),
+    ).resolves.toEqual({
+      providerPaymentId: `pi_${webhookEventPrefix}`,
+      status: 'SUCCEEDED',
+    });
+    await expect(
+      database.prisma.order.findUniqueOrThrow({
+        where: { id: stageThreeOrderId },
+        select: { status: true },
+      }),
+    ).resolves.toEqual({ status: 'PAID' });
+  });
+
+  it('persists a signed amount mismatch but rejects every business mutation', async () => {
+    expect(stageThreeOrderId).toBeDefined();
+    expect(stageThreePaymentId).toBeDefined();
+    expect(stageThreeOrderAmount).toBeDefined();
+    expect(stageThreeOrderCurrency).toBeDefined();
+
+    const eventId = `${webhookEventPrefix}_amount_mismatch`;
+    const event = paymentIntentEvent(
+      eventId,
+      'payment_intent.succeeded',
+      stageThreePaymentId as string,
+      stageThreeOrderId as string,
+      (stageThreeOrderAmount as number) + 1,
+      stageThreeOrderCurrency as string,
+    );
+    const response = await sendWebhook(event).expect(400);
+
+    expect((response.body as unknown as ErrorResponse).code).toBe(
+      'WEBHOOK_EVENT_REJECTED',
+    );
+    await expect(
+      database.prisma.webhookEvent.findUniqueOrThrow({
+        where: { providerEventId: eventId },
+        select: { status: true },
+      }),
+    ).resolves.toEqual({ status: 'FAILED' });
+    await expect(
+      database.prisma.payment.findUniqueOrThrow({
+        where: { id: stageThreePaymentId },
+        select: { status: true },
+      }),
+    ).resolves.toEqual({ status: 'SUCCEEDED' });
+    await expect(
+      database.prisma.order.findUniqueOrThrow({
+        where: { id: stageThreeOrderId },
+        select: { status: true },
+      }),
+    ).resolves.toEqual({ status: 'PAID' });
+  });
+
+  it('persists but ignores an older failure and an unknown signed event', async () => {
+    expect(stageThreeOrderId).toBeDefined();
+    expect(stageThreePaymentId).toBeDefined();
+    expect(stageThreeOrderAmount).toBeDefined();
+    expect(stageThreeOrderCurrency).toBeDefined();
+
+    const staleEvent = paymentIntentEvent(
+      `${webhookEventPrefix}_stale_failure`,
+      'payment_intent.payment_failed',
+      stageThreePaymentId as string,
+      stageThreeOrderId as string,
+      stageThreeOrderAmount as number,
+      stageThreeOrderCurrency as string,
+      1_786_559_000,
+    );
+    const staleResponse = await sendWebhook(staleEvent).expect(200);
+    expect(staleResponse.body).toMatchObject({
+      duplicate: false,
+      received: true,
+      status: 'IGNORED',
+    });
+
+    const unknownResponse = await sendWebhook({
+      api_version: '2026-07-29.dahlia',
+      created: 1_786_560_100,
+      data: { object: { id: 'cus_stage_4', object: 'customer' } },
+      id: `${webhookEventPrefix}_unknown`,
+      livemode: false,
+      object: 'event',
+      pending_webhooks: 1,
+      request: null,
+      type: 'customer.created',
+    }).expect(200);
+    expect(unknownResponse.body).toMatchObject({
+      duplicate: false,
+      status: 'IGNORED',
+    });
+
+    await expect(
+      database.prisma.payment.findUniqueOrThrow({
+        where: { id: stageThreePaymentId },
+        select: { status: true },
+      }),
+    ).resolves.toEqual({ status: 'SUCCEEDED' });
+    await expect(
+      database.prisma.order.findUniqueOrThrow({
+        where: { id: stageThreeOrderId },
+        select: { status: true },
+      }),
+    ).resolves.toEqual({ status: 'PAID' });
+  });
+
   it('serializes payment reservation against order cancellation', async () => {
     const products = await request(app.getHttpServer())
       .get('/products')
@@ -482,6 +671,9 @@ describe('PayFlow Stage 3 (e2e)', () => {
 
   afterAll(async () => {
     if (database) {
+      await database.prisma.webhookEvent.deleteMany({
+        where: { providerEventId: { startsWith: webhookEventPrefix } },
+      });
       if (stageThreeOrderId) {
         await database.prisma.payment.deleteMany({
           where: { orderId: stageThreeOrderId },
@@ -523,4 +715,54 @@ describe('PayFlow Stage 3 (e2e)', () => {
     }
     await app?.close();
   });
+
+  function sendWebhook(
+    event: Record<string, unknown>,
+    signingSecret = webhookSecret,
+  ) {
+    const payload = JSON.stringify(event, null, 2);
+    const signature = Stripe.webhooks.generateTestHeaderString({
+      payload,
+      secret: signingSecret,
+    });
+
+    return request(app.getHttpServer())
+      .post('/webhooks/stripe')
+      .set('Content-Type', 'application/json')
+      .set('Stripe-Signature', signature)
+      .send(payload);
+  }
 });
+
+function paymentIntentEvent(
+  eventId: string,
+  type: 'payment_intent.payment_failed' | 'payment_intent.succeeded',
+  paymentId: string,
+  orderId: string,
+  amount: number,
+  currency: string,
+  created = 1_786_560_000,
+): Record<string, unknown> {
+  return {
+    api_version: '2026-07-29.dahlia',
+    created,
+    data: {
+      object: {
+        amount,
+        currency: currency.toLowerCase(),
+        id: `pi_${eventId.replace(
+          /_(amount_mismatch|forged|succeeded|stale_failure)$/,
+          '',
+        )}`,
+        metadata: { orderId, paymentId },
+        object: 'payment_intent',
+      },
+    },
+    id: eventId,
+    livemode: false,
+    object: 'event',
+    pending_webhooks: 1,
+    request: null,
+    type,
+  };
+}

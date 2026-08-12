@@ -8,6 +8,7 @@ export interface ApiEnvironment {
   NODE_ENV: NodeEnvironment;
   PORT: number;
   STRIPE_SECRET_KEY: string;
+  STRIPE_WEBHOOK_SECRET: string;
 }
 
 const allowedNodeEnvironments = new Set<NodeEnvironment>([
@@ -30,6 +31,7 @@ export function validateEnvironment(
   const jwtSecret = readString(values, 'JWT_SECRET', '');
   const jwtExpiresInSeconds = Number(values.JWT_EXPIRES_IN_SECONDS ?? 900);
   const stripeSecretKey = readString(values, 'STRIPE_SECRET_KEY', '');
+  const stripeWebhookSecret = readString(values, 'STRIPE_WEBHOOK_SECRET', '');
 
   if (!allowedNodeEnvironments.has(nodeEnvironment as NodeEnvironment)) {
     throw new Error(
@@ -69,6 +71,12 @@ export function validateEnvironment(
     );
   }
 
+  if (stripeWebhookSecret && !stripeWebhookSecret.startsWith('whsec_')) {
+    throw new Error(
+      'STRIPE_WEBHOOK_SECRET must be a Stripe webhook signing secret.',
+    );
+  }
+
   try {
     new URL(appBaseUrl);
   } catch {
@@ -84,6 +92,7 @@ export function validateEnvironment(
     NODE_ENV: nodeEnvironment as NodeEnvironment,
     PORT: port,
     STRIPE_SECRET_KEY: stripeSecretKey,
+    STRIPE_WEBHOOK_SECRET: stripeWebhookSecret,
   };
 }
 

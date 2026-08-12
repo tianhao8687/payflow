@@ -1,6 +1,7 @@
 import { ValidationPipe } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { NestFactory } from '@nestjs/core';
+import type { NestExpressApplication } from '@nestjs/platform-express';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import helmet from 'helmet';
 
@@ -9,7 +10,9 @@ import type { ApiEnvironment } from './config/environment';
 import { ApiExceptionFilter } from './http/api-exception.filter';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, {
+    rawBody: true,
+  });
   const configService = app.get(ConfigService<ApiEnvironment, true>);
   const appBaseUrl = configService.get('APP_BASE_URL', { infer: true });
   const port = configService.get('PORT', { infer: true });
@@ -32,7 +35,7 @@ async function bootstrap() {
   const swaggerConfig = new DocumentBuilder()
     .setTitle('PayFlow API')
     .setDescription('PayFlow payment system REST API')
-    .setVersion('0.2.0')
+    .setVersion('0.4.0')
     .addBearerAuth({ bearerFormat: 'JWT', scheme: 'bearer', type: 'http' })
     .build();
   const documentFactory = () =>

@@ -37,6 +37,7 @@ services:
       PAYFLOW_ADMIN_PASSWORD: ${PAYFLOW_ADMIN_PASSWORD:-Payflow-Sandbox-Admin-2026!}
       PORT: 4000
       STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
     ports:
       - '${API_PORT:-4000}:4000'
     depends_on:

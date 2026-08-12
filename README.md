@@ -4,9 +4,9 @@ PayFlow is a full-stack payment-system portfolio project implemented one
 acceptance-gated stage at a time from the accompanying Codex implementation
 specification.
 
-> Current delivery: **Stage 3 — Stripe Payment (accepted)**. A real Stripe Test
-> hosted page and repeated-session idempotency have passed. Stage 4 webhook work
-> is next and has not yet changed payment state.
+> Current delivery: **Stage 4 — Webhook (accepted)**. Stripe Test Checkout,
+> server-side signature verification, durable event deduplication, and atomic
+> Payment/Order transitions have passed their acceptance gates.
 
 ## Current architecture
 
@@ -17,6 +17,8 @@ flowchart LR
   Browser -->|cart IDs + quantities| Orders[NestJS orders API]
   Browser -->|order ID| Payments[NestJS payments API]
   Payments -->|hosted Checkout + stable key| Stripe[Stripe Test]
+  Stripe -->|signed raw Event| Webhooks[NestJS webhook module]
+  Webhooks -->|verify + transactional inbox| DB
   Browser -->|Bearer JWT| Protected[Protected API boundary]
   Protected --> RBAC{USER or ADMIN}
   Auth --> DB[(PostgreSQL :5432)]
@@ -98,6 +100,7 @@ docker compose down
 | POST   | `/orders/:id/cancel`         | JWT    | Cancel an owned pending order        |
 | POST   | `/payments/checkout-session` | JWT    | Create or reuse Stripe Test Checkout |
 | GET    | `/payments/:id`              | JWT    | Read an owned local payment          |
+| POST   | `/webhooks/stripe`           | Public | Verify and process a Stripe Event    |
 
 Public registration cannot choose a role. Order creation accepts only product
 IDs and quantities; any client price field is rejected, and accepted totals are
@@ -125,6 +128,20 @@ Stripe Checkout is disabled safely until `STRIPE_SECRET_KEY` is set to a test or
 sandbox key (`sk_test_...` or `rk_test_...`). Live keys are rejected. Never
 commit or paste a secret key into source or documentation.
 
+Webhook processing also fails closed until `STRIPE_WEBHOOK_SECRET` contains the
+signing secret for the exact Stripe sandbox endpoint. For local forwarding, use
+the official Stripe CLI in a separate terminal:
+
+```powershell
+stripe login
+stripe listen --events checkout.session.completed,checkout.session.async_payment_succeeded,checkout.session.async_payment_failed,payment_intent.processing,payment_intent.succeeded,payment_intent.payment_failed --forward-to localhost:4000/webhooks/stripe
+```
+
+Copy the displayed `whsec_...` value into the ignored `apps/api/.env`, restart
+the API, then complete a Stripe Test Checkout. A CLI listener secret and a
+Dashboard endpoint secret are different; use the one that signs the forwarded
+request. Returning to PayFlow never proves payment—the signed webhook does.
+
 ## Quality gates
 
 Run static checks, unit tests, and production builds:
@@ -142,7 +159,7 @@ pnpm test:e2e
 ```
 
 The GitHub Actions workflow starts PostgreSQL 18 and performs both groups. Full
-evidence is recorded in [`docs/stages/stage-3.md`](docs/stages/stage-3.md).
+evidence is recorded in [`docs/stages/stage-4.md`](docs/stages/stage-4.md).
 
 ## Workspace layout
 
@@ -156,6 +173,7 @@ packages/
 docs/
   adr/        Architecture decision records
   design/     Stage-scoped visual specifications and QA captures
+  webhook-design.md  Raw-body, deduplication, and transaction contract
 infra/
   docker/     Container notes
 ```
@@ -167,6 +185,8 @@ explicit generated-client output and driver adapter, and runs seeds only through
 an explicit `prisma db seed`. This repository follows those official APIs with
 `@prisma/adapter-pg` and `migrations.seed`. Next.js route-aware helpers are
 generated with `next typegen` before standalone TypeScript checks.
+NestJS 11's supported `rawBody: true` application option retains exact request
+bytes for Stripe signature verification while keeping the built-in JSON parser.
 
 ## Safety boundary
 

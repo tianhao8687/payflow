@@ -1,10 +1,11 @@
 # PayFlow architecture
 
-## Current boundary: Stage 3 accepted
+## Current boundary: Stage 4 accepted
 
-Stage 3 adds the separate payment aggregate, Stripe-hosted Test Checkout, stable
-provider idempotency, and local payment-status UI. Its real hosted-page gate has
-passed; Stage 4 webhook processing has not begun.
+Stage 4 makes the signed server-side webhook the only payment-success authority.
+It adds exact raw-body verification, a durable transactional inbox, database
+deduplication, and atomic Payment/Order state transitions without changing the
+V1 modular-monolith boundary.
 
 ```mermaid
 flowchart TB
@@ -22,6 +23,8 @@ flowchart TB
     Orders[Orders module + state machine]
     Payments[Payments module + state machine]
     StripeGateway[Stripe Checkout gateway]
+    Webhooks[Webhooks module + event mapper]
+    StripeVerifier[Stripe signature verifier]
     Guards[JWT guard + roles guard]
     System[System and health module]
     DatabaseModule[Database module]
@@ -45,6 +48,9 @@ flowchart TB
   Orders --> DatabaseModule
   Payments --> DatabaseModule
   Payments --> StripeGateway --> Stripe[Stripe Test hosted Checkout]
+  Stripe -->|raw Event + signature| Webhooks
+  Webhooks --> StripeVerifier
+  Webhooks --> DatabaseModule
   Users --> DatabaseModule
   System --> DatabaseModule
   DatabaseModule --> Prisma --> Postgres
@@ -108,8 +114,29 @@ flowchart TB
   `PaymentAttempt` audit rows. Stripe results are checked against local amount
   and currency before the explicit `CREATED → PENDING` transition.
 - The result page reads the protected local API and ignores redirect query data.
-  A browser return cannot mark an order paid; Stage 4 webhook handling will be
-  the final authority.
+  A browser return cannot mark an order paid; Stage 4 webhook handling is the
+  final authority.
+
+## Stage 4 webhook boundary
+
+- `POST /webhooks/stripe` is public at the JWT layer but authenticates the
+  sender cryptographically with the `Stripe-Signature` header and exact raw
+  request bytes. Missing configuration or invalid signatures fail closed before
+  persistence.
+- Only sandbox events are accepted. The mapper handles Checkout completion,
+  asynchronous Checkout outcomes, and PaymentIntent processing/success/failure;
+  unknown or unrelated signed events are durably marked `IGNORED`.
+- Every verified event is stored in `webhook_events` as JSONB. A unique
+  `provider_event_id` is the final deduplication boundary; a transaction-scoped
+  advisory lock makes concurrent duplicate deliveries converge before the
+  unique constraint is reached.
+- Recognized events lock the order/payment concurrency boundary, verify local
+  IDs, provider references, amount, and currency, then call explicit transition
+  functions. `Payment → SUCCEEDED` and `Order → PAID` commit in the same
+  serializable transaction.
+- Terminal success/refund states cannot move backward when an older failed or
+  processing event arrives. Deterministic integrity failures persist as
+  `FAILED` and return a non-2xx response without changing business state.
 
 ## Data boundary
 
@@ -122,7 +149,9 @@ price, quantity, and line-total snapshots. `payments` stores provider lifecycle,
 amount, idempotency, and Checkout references; `payment_attempts` records provider
 calls. PostgreSQL checks enforce lowercase
 emails, nonnegative money/stock, positive item quantities, arithmetic equality,
-and uppercase three-letter currency.
+and uppercase three-letter currency. `webhook_events` stores the original
+verified Event JSON, provider ID/type, processing state, and receive/process
+timestamps; it never stores card numbers or CVC data added by PayFlow.
 
 ## Runtime topology
 
@@ -138,7 +167,6 @@ The API validates environment variables at startup. Request IDs and the shared
 
 ## Deferred boundaries
 
-- Webhooks — Stage 4.
 - Refund operations and the admin business console — Stage 5.
 - `apps/worker`, Redis/BullMQ, provider packages, outbox, ledger, and
   reconciliation — their specified later stages.

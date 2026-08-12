@@ -15,6 +15,7 @@ import { RequestIdMiddleware } from './http/request-id.middleware';
 import { OrdersModule } from './orders/orders.module';
 import { PaymentsModule } from './payments/payments.module';
 import { ProductsModule } from './products/products.module';
+import { WebhooksModule } from './webhooks/webhooks.module';
 
 @Module({
   imports: [
@@ -30,6 +31,7 @@ import { ProductsModule } from './products/products.module';
     ProductsModule,
     OrdersModule,
     PaymentsModule,
+    WebhooksModule,
   ],
   controllers: [AppController],
   providers: [

@@ -10,6 +10,7 @@ export {
   Prisma,
   PrismaClient,
   Role,
+  WebhookEventStatus,
 } from './generated/prisma/client';
 export type {
   Order,
@@ -18,6 +19,7 @@ export type {
   PaymentAttempt,
   Product,
   User,
+  WebhookEvent,
 } from './generated/prisma/client';
 
 export function createPrismaClient(databaseUrl: string): PrismaClient {

@@ -42,6 +42,13 @@ enum PaymentAttemptStatus {
   FAILED
 }
 
+enum WebhookEventStatus {
+  RECEIVED
+  PROCESSED
+  IGNORED
+  FAILED
+}
+
 model User {
   id           String   @id @default(uuid()) @db.Uuid
   email        String   @unique @db.VarChar(320)
@@ -54,13 +61,13 @@ model User {
 }
 
 model Product {
-  id          String  @id @default(uuid()) @db.Uuid
-  sku         String  @unique @db.VarChar(64)
-  name        String  @db.VarChar(160)
-  priceAmount Int     @map("price_amount")
-  currency    String  @db.Char(3)
+  id          String      @id @default(uuid()) @db.Uuid
+  sku         String      @unique @db.VarChar(64)
+  name        String      @db.VarChar(160)
+  priceAmount Int         @map("price_amount")
+  currency    String      @db.Char(3)
   stock       Int
-  active      Boolean @default(true)
+  active      Boolean     @default(true)
   orderItems  OrderItem[]
 
   @@index([active])
@@ -139,4 +146,19 @@ model PaymentAttempt {
 
   @@index([paymentId, createdAt])
   @@map("payment_attempts")
+}
+
+model WebhookEvent {
+  id              String             @id @default(uuid()) @db.Uuid
+  provider        PaymentProvider
+  providerEventId String             @unique @map("provider_event_id") @db.VarChar(255)
+  eventType       String             @map("event_type") @db.VarChar(255)
+  payloadJson     Json               @map("payload_json") @db.JsonB
+  status          WebhookEventStatus @default(RECEIVED)
+  receivedAt      DateTime           @default(now()) @map("received_at") @db.Timestamptz(3)
+  processedAt     DateTime?          @map("processed_at") @db.Timestamptz(3)
+
+  @@index([provider, receivedAt])
+  @@index([status, receivedAt])
+  @@map("webhook_events")
 }

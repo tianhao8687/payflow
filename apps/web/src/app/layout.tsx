@@ -13,7 +13,7 @@ export const metadata: Metadata = {
     template: '%s | PayFlow',
   },
   description:
-    'Create server-priced orders and open idempotent Stripe-hosted test Checkout sessions.',
+    'Create server-priced orders and confirm Stripe Test payments through signed, idempotent webhooks.',
 };
 
 export default function RootLayout({ children }: LayoutProps<'/'>) {
