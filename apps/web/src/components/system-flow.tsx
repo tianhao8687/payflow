@@ -45,7 +45,7 @@ export function SystemFlow() {
   return (
     <div
       className="relative grid grid-cols-2 gap-x-4 gap-y-10 sm:gap-x-7 lg:grid-cols-4 lg:gap-4"
-      aria-label="PayFlow Stage 4 system flow"
+      aria-label="PayFlow Stage 5 system flow"
     >
       <FlowNode
         icon={<CodeIcon />}
@@ -71,7 +71,7 @@ export function SystemFlow() {
         connector
         icon={<GatewayIcon />}
         label="Stripe sandbox"
-        status="signed webhook"
+        status="checkout + refunds"
         statusTone="success"
       />
     </div>

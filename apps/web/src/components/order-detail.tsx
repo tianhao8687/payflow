@@ -317,25 +317,47 @@ export function OrderDetail({ id }: { id: string }) {
               </h2>
               <ul className="mt-4 grid gap-3">
                 {order.payments.map((payment) => (
-                  <li
-                    className="flex flex-col gap-3 border border-[#d7dbe2] p-4 sm:flex-row sm:items-center sm:justify-between"
-                    key={payment.id}
-                  >
-                    <div>
-                      <p className="font-mono text-xs font-bold tracking-[0.08em] text-[#555b66] uppercase">
-                        {payment.provider} /{' '}
-                        {payment.status.replaceAll('_', ' ')}
-                      </p>
-                      <p className="mt-1 font-bold tabular-nums">
-                        {formatMoney(payment.amount, payment.currency)}
-                      </p>
+                  <li className="border border-[#d7dbe2] p-4" key={payment.id}>
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                      <div>
+                        <p className="font-mono text-xs font-bold tracking-[0.08em] text-[#555b66] uppercase">
+                          {payment.provider} /{' '}
+                          {payment.status.replaceAll('_', ' ')}
+                        </p>
+                        <p className="mt-1 font-bold tabular-nums">
+                          {formatMoney(payment.amount, payment.currency)}
+                        </p>
+                      </div>
+                      <Link
+                        className="inline-flex min-h-10 items-center font-semibold text-[#0757ff] underline decoration-2 underline-offset-4 hover:text-[#003fc7] focus-visible:rounded-sm focus-visible:outline-3 focus-visible:outline-offset-3 focus-visible:outline-[#0757ff]"
+                        href={`/payments/${payment.id}/result`}
+                      >
+                        Check local status
+                      </Link>
                     </div>
-                    <Link
-                      className="inline-flex min-h-10 items-center font-semibold text-[#0757ff] underline decoration-2 underline-offset-4 hover:text-[#003fc7] focus-visible:rounded-sm focus-visible:outline-3 focus-visible:outline-offset-3 focus-visible:outline-[#0757ff]"
-                      href={`/payments/${payment.id}/result`}
-                    >
-                      Check local status
-                    </Link>
+
+                    {payment.refunds.length > 0 ? (
+                      <div className="mt-4 border-t border-[#d7dbe2] pt-4">
+                        <p className="font-mono text-[11px] font-bold tracking-[0.1em] text-[#555b66] uppercase">
+                          Refund history
+                        </p>
+                        <ul className="mt-3 grid gap-2">
+                          {payment.refunds.map((refund) => (
+                            <li
+                              className="flex flex-wrap items-center justify-between gap-2 bg-[#f5f7fa] px-3 py-2 text-sm"
+                              key={refund.id}
+                            >
+                              <span className="font-bold tabular-nums">
+                                {formatMoney(refund.amount, payment.currency)}
+                              </span>
+                              <span className="font-mono text-xs font-bold tracking-[0.06em] text-[#555b66] uppercase">
+                                {refund.status}
+                              </span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    ) : null}
                   </li>
                 ))}
               </ul>

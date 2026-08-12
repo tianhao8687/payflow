@@ -24,7 +24,7 @@ or ordered delivery. Payment success and Order paid state must never diverge.
   business mutation.
 - Share the order advisory-lock boundary with payment creation/cancellation and
   row-lock the affected order/payment. Commit inbox result, Payment, and Order
-  changes in one serializable transaction.
+  changes in one locked transaction.
 - Treat an invalid domain transition as a stale event and persist it as
   `IGNORED`; never regress terminal success/refund states. Persist deterministic
   integrity violations as `FAILED` and return non-2xx.
@@ -42,3 +42,12 @@ or ordered delivery. Payment success and Order paid state must never diverge.
   required by the specification and contains no PayFlow-added card data.
 - Stage 8 can enqueue from the existing durable inbox without changing the
   signature or deduplication boundary.
+
+## Stage 5 amendment
+
+Concurrent delivery testing showed that a `SERIALIZABLE` snapshot can be taken
+while an advisory-lock statement waits, causing avoidable write conflicts after
+the lock is acquired. The transaction now uses `READ COMMITTED` with the same
+event/order advisory locks and row locks. The post-lock query therefore sees the
+latest committed row while the explicit locks retain the required serialization
+and atomic commit boundary. ADR 0008 records this refinement.

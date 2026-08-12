@@ -5,6 +5,7 @@ import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
+import { AdminModule } from './admin/admin.module';
 import { AuthModule } from './auth/auth.module';
 import { JwtAuthGuard } from './auth/guards/jwt-auth.guard';
 import { RolesGuard } from './auth/guards/roles.guard';
@@ -15,6 +16,7 @@ import { RequestIdMiddleware } from './http/request-id.middleware';
 import { OrdersModule } from './orders/orders.module';
 import { PaymentsModule } from './payments/payments.module';
 import { ProductsModule } from './products/products.module';
+import { RefundsModule } from './refunds/refunds.module';
 import { WebhooksModule } from './webhooks/webhooks.module';
 
 @Module({
@@ -26,12 +28,14 @@ import { WebhooksModule } from './webhooks/webhooks.module';
     }),
     ThrottlerModule.forRoot([{ limit: 120, ttl: 60_000 }]),
     DatabaseModule,
+    AdminModule,
     AuthModule,
     HealthModule,
     ProductsModule,
     OrdersModule,
     PaymentsModule,
     WebhooksModule,
+    RefundsModule,
   ],
   controllers: [AppController],
   providers: [

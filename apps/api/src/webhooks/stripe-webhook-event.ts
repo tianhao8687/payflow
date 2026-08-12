@@ -1,4 +1,4 @@
-import { PaymentStatus } from '@payflow/database';
+import { PaymentStatus, RefundStatus } from '@payflow/database';
 import Stripe from 'stripe';
 
 interface StripeWebhookIgnoredAction {
@@ -25,10 +25,26 @@ export interface StripePaymentTransitionAction {
     | typeof PaymentStatus.FAILED;
 }
 
+export interface StripeRefundSyncAction {
+  amount: number;
+  currency: string;
+  failureCode: string | null;
+  failureMessage: string | null;
+  kind: 'REFUND_SYNC';
+  orderId: string;
+  paymentId: string;
+  providerPaymentId: string | null;
+  providerRefundId: string;
+  providerRequestId: string | null;
+  refundId: string;
+  status: RefundStatus;
+}
+
 export type StripeWebhookAction =
   | StripeWebhookIgnoredAction
   | StripeWebhookRejectedAction
-  | StripePaymentTransitionAction;
+  | StripePaymentTransitionAction
+  | StripeRefundSyncAction;
 
 const uuidPattern =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -70,12 +86,68 @@ export function mapStripeWebhookEvent(
       return fromPaymentIntent(event.data.object, PaymentStatus.SUCCEEDED);
     case 'payment_intent.payment_failed':
       return fromPaymentIntent(event.data.object, PaymentStatus.FAILED);
+    case 'refund.created':
+    case 'refund.updated':
+    case 'refund.failed':
+      return fromRefund(
+        event.data.object,
+        event.request?.id ?? null,
+        event.type === 'refund.failed',
+      );
+    case 'charge.refunded':
+      return {
+        kind: 'IGNORE',
+        reason:
+          'Current Stripe guidance uses refund.created/updated/failed for refund detail; charge.refunded is audit-only.',
+      };
     default:
       return {
         kind: 'IGNORE',
-        reason: `Event type ${event.type} is not handled by Stage 4.`,
+        reason: `Event type ${event.type} is not handled by PayFlow.`,
       };
   }
+}
+
+function fromRefund(
+  refund: Stripe.Refund,
+  providerRequestId: string | null,
+  forcedFailure: boolean,
+): StripeWebhookAction {
+  const identifiers = readRefundIdentifiers(refund.metadata);
+
+  if (!identifiers) {
+    return missingMetadata(refund.id);
+  }
+
+  const status = forcedFailure
+    ? RefundStatus.FAILED
+    : mapRefundStatus(refund.status);
+
+  if (!status) {
+    return {
+      kind: 'REJECT',
+      reason: `Stripe refund ${refund.id} has unsupported status ${refund.status ?? 'null'}.`,
+    };
+  }
+
+  return {
+    amount: refund.amount,
+    currency: refund.currency.toUpperCase(),
+    failureCode:
+      status === RefundStatus.FAILED
+        ? (refund.failure_reason ?? refund.status ?? 'failed')
+        : null,
+    failureMessage:
+      status === RefundStatus.FAILED
+        ? 'Stripe reported that the refund failed or was canceled.'
+        : null,
+    kind: 'REFUND_SYNC',
+    ...identifiers,
+    providerPaymentId: expandableId(refund.payment_intent),
+    providerRefundId: refund.id,
+    providerRequestId,
+    status,
+  };
 }
 
 function fromCheckoutSession(
@@ -136,6 +208,45 @@ function readIdentifiers(
   }
 
   return { orderId, paymentId };
+}
+
+function readRefundIdentifiers(metadata: Stripe.Metadata | null): {
+  orderId: string;
+  paymentId: string;
+  refundId: string;
+} | null {
+  const orderId = metadata?.orderId;
+  const paymentId = metadata?.paymentId;
+  const refundId = metadata?.refundId;
+
+  if (
+    typeof orderId !== 'string' ||
+    typeof paymentId !== 'string' ||
+    typeof refundId !== 'string' ||
+    !uuidPattern.test(orderId) ||
+    !uuidPattern.test(paymentId) ||
+    !uuidPattern.test(refundId)
+  ) {
+    return null;
+  }
+
+  return { orderId, paymentId, refundId };
+}
+
+function mapRefundStatus(status: string | null): RefundStatus | null {
+  if (status === 'succeeded') {
+    return RefundStatus.SUCCEEDED;
+  }
+
+  if (status === 'failed' || status === 'canceled') {
+    return RefundStatus.FAILED;
+  }
+
+  if (status === 'pending' || status === 'requires_action') {
+    return RefundStatus.PENDING;
+  }
+
+  return null;
 }
 
 function expandableId(value: string | { id: string } | null): string | null {

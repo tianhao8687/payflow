@@ -4,9 +4,10 @@ PayFlow is a full-stack payment-system portfolio project implemented one
 acceptance-gated stage at a time from the accompanying Codex implementation
 specification.
 
-> Current delivery: **Stage 4 — Webhook (accepted)**. Stripe Test Checkout,
-> server-side signature verification, durable event deduplication, and atomic
-> Payment/Order transitions have passed their acceptance gates.
+> Current delivery: **Stage 5 — Refund and administration (local gates
+> passed)**. Serialized Stripe Test refunds, end-to-end idempotency, signed
+> refund lifecycle, audit records, and the operations console are implemented;
+> the remote CI phase gate is recorded in the Stage 5 acceptance file.
 
 ## Current architecture
 
@@ -17,6 +18,8 @@ flowchart LR
   Browser -->|cart IDs + quantities| Orders[NestJS orders API]
   Browser -->|order ID| Payments[NestJS payments API]
   Payments -->|hosted Checkout + stable key| Stripe[Stripe Test]
+  Admin[Admin operations console] -->|ADMIN JWT| Refunds[NestJS refunds API]
+  Refunds -->|stable refund key| Stripe
   Stripe -->|signed raw Event| Webhooks[NestJS webhook module]
   Webhooks -->|verify + transactional inbox| DB
   Browser -->|Bearer JWT| Protected[Protected API boundary]
@@ -25,6 +28,7 @@ flowchart LR
   Products --> DB
   Orders -->|server price + snapshot transaction| DB
   Payments -->|Payment + provider attempts| DB
+  Refunds -->|Refund + AuditLog| DB
   RBAC --> DB
   Auth --> Docs[OpenAPI /docs]
 ```
@@ -73,6 +77,7 @@ Services and interfaces:
 - Login: <http://localhost:3000/login>
 - Cart: <http://localhost:3000/cart>
 - Customer orders: <http://localhost:3000/orders>
+- Admin operations: <http://localhost:3000/admin>
 - API information: <http://localhost:4000>
 - API health: <http://localhost:4000/health>
 - OpenAPI UI: <http://localhost:4000/docs>
@@ -86,26 +91,34 @@ docker compose down
 
 ## Current API
 
-| Method | Path                         | Access | Purpose                              |
-| ------ | ---------------------------- | ------ | ------------------------------------ |
-| POST   | `/auth/register`             | Public | Create a USER and issue a JWT        |
-| POST   | `/auth/login`                | Public | Verify credentials and issue JWT     |
-| GET    | `/auth/me`                   | JWT    | Return the safe current-user DTO     |
-| GET    | `/products`                  | Public | List active products                 |
-| GET    | `/products/:id`              | Public | Read one active product              |
-| GET    | `/admin/profile`             | ADMIN  | Verify the administrator boundary    |
-| POST   | `/orders`                    | JWT    | Create a server-priced order         |
-| GET    | `/orders`                    | JWT    | List current user's orders           |
-| GET    | `/orders/:id`                | JWT    | Read an owned order and snapshots    |
-| POST   | `/orders/:id/cancel`         | JWT    | Cancel an owned pending order        |
-| POST   | `/payments/checkout-session` | JWT    | Create or reuse Stripe Test Checkout |
-| GET    | `/payments/:id`              | JWT    | Read an owned local payment          |
-| POST   | `/webhooks/stripe`           | Public | Verify and process a Stripe Event    |
+| Method | Path                          | Access | Purpose                                  |
+| ------ | ----------------------------- | ------ | ---------------------------------------- |
+| POST   | `/auth/register`              | Public | Create a USER and issue a JWT            |
+| POST   | `/auth/login`                 | Public | Verify credentials and issue JWT         |
+| GET    | `/auth/me`                    | JWT    | Return the safe current-user DTO         |
+| GET    | `/products`                   | Public | List active products                     |
+| GET    | `/products/:id`               | Public | Read one active product                  |
+| POST   | `/orders`                     | JWT    | Create a server-priced order             |
+| GET    | `/orders`                     | JWT    | List current user's orders               |
+| GET    | `/orders/:id`                 | JWT    | Read owned order, payments, and refunds  |
+| POST   | `/orders/:id/cancel`          | JWT    | Cancel an owned pending order            |
+| POST   | `/payments/checkout-session`  | JWT    | Create or reuse Stripe Test Checkout     |
+| GET    | `/payments/:id`               | JWT    | Read an owned local payment and refunds  |
+| POST   | `/webhooks/stripe`            | Public | Verify and process a Stripe Event        |
+| GET    | `/admin/profile`              | ADMIN  | Verify the administrator boundary        |
+| GET    | `/admin/dashboard`            | ADMIN  | Read payment-system operational counters |
+| GET    | `/admin/orders[/:id]`         | ADMIN  | Paginate/search and inspect orders       |
+| GET    | `/admin/payments[/:id]`       | ADMIN  | Paginate/search payments and attempts    |
+| POST   | `/admin/payments/:id/refunds` | ADMIN  | Create idempotent full/partial refund    |
+| GET    | `/admin/refunds`              | ADMIN  | Paginate provider refund outcomes        |
+| GET    | `/admin/webhooks`             | ADMIN  | Inspect event duplicates and failures    |
+| GET    | `/admin/audit-logs`           | ADMIN  | Inspect actor/reason/target history      |
 
 Public registration cannot choose a role. Order creation accepts only product
 IDs and quantities; any client price field is rejected, and accepted totals are
-calculated from current database products. The `/admin/profile` route remains
-an RBAC verifier, not the Stage 5 admin business console.
+calculated from current database products. Browser visibility is not an
+authorization control: every administration endpoint independently requires
+the API-verified ADMIN role.
 
 ## Local development
 
@@ -134,7 +147,7 @@ the official Stripe CLI in a separate terminal:
 
 ```powershell
 stripe login
-stripe listen --events checkout.session.completed,checkout.session.async_payment_succeeded,checkout.session.async_payment_failed,payment_intent.processing,payment_intent.succeeded,payment_intent.payment_failed --forward-to localhost:4000/webhooks/stripe
+stripe listen --events checkout.session.completed,checkout.session.async_payment_succeeded,checkout.session.async_payment_failed,payment_intent.processing,payment_intent.succeeded,payment_intent.payment_failed,refund.created,refund.updated,refund.failed,charge.refunded --forward-to localhost:4000/webhooks/stripe
 ```
 
 Copy the displayed `whsec_...` value into the ignored `apps/api/.env`, restart
@@ -159,7 +172,7 @@ pnpm test:e2e
 ```
 
 The GitHub Actions workflow starts PostgreSQL 18 and performs both groups. Full
-evidence is recorded in [`docs/stages/stage-4.md`](docs/stages/stage-4.md).
+evidence is recorded in [`docs/stages/stage-5.md`](docs/stages/stage-5.md).
 
 ## Workspace layout
 
@@ -173,6 +186,7 @@ packages/
 docs/
   adr/        Architecture decision records
   design/     Stage-scoped visual specifications and QA captures
+  refund-design.md   Refund locking, idempotency, and administration contract
   webhook-design.md  Raw-body, deduplication, and transaction contract
 infra/
   docker/     Container notes

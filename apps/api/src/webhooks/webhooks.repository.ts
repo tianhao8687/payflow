@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import {
   OrderStatus,
+  AuditActorType,
   PaymentProvider,
   PaymentStatus,
   Prisma,
@@ -17,6 +18,7 @@ import {
   InvalidPaymentTransitionError,
   assertPaymentTransition,
 } from '../payments/payment-state-machine';
+import { applyProviderRefundSnapshot } from '../refunds/refund-state-projection';
 import type {
   StripePaymentTransitionAction,
   StripeWebhookAction,
@@ -24,6 +26,11 @@ import type {
 
 export interface WebhookProcessingResult {
   duplicate: boolean;
+  status: WebhookEventStatus;
+}
+
+interface WebhookActionResult {
+  processingError: string | null;
   status: WebhookEventStatus;
 }
 
@@ -50,7 +57,16 @@ export class WebhooksRepository {
             });
 
             if (existing) {
-              return { duplicate: true, status: existing.status };
+              const duplicate = await transaction.webhookEvent.update({
+                where: { providerEventId: event.id },
+                data: {
+                  deliveryCount: { increment: 1 },
+                  lastReceivedAt: new Date(),
+                },
+                select: { status: true },
+              });
+
+              return { duplicate: true, status: duplicate.status };
             }
 
             const webhookEvent = await transaction.webhookEvent.create({
@@ -65,24 +81,71 @@ export class WebhooksRepository {
               select: { id: true },
             });
 
-            let status: WebhookEventStatus;
+            let result: WebhookActionResult;
 
             if (action.kind === 'IGNORE') {
-              status = WebhookEventStatus.IGNORED;
+              result = {
+                processingError: action.reason,
+                status: WebhookEventStatus.IGNORED,
+              };
             } else if (action.kind === 'REJECT') {
-              status = WebhookEventStatus.FAILED;
+              result = {
+                processingError: action.reason,
+                status: WebhookEventStatus.FAILED,
+              };
+            } else if (action.kind === 'REFUND_SYNC') {
+              const projection = await applyProviderRefundSnapshot(
+                transaction,
+                action.refundId,
+                action,
+              );
+
+              if (!projection.error && !projection.stale) {
+                await transaction.auditLog.create({
+                  data: {
+                    action: `REFUND_WEBHOOK_${action.status}`,
+                    actorType: AuditActorType.SYSTEM,
+                    metadataJson: {
+                      providerEventId: event.id,
+                      providerRefundId: action.providerRefundId,
+                    },
+                    targetId: action.refundId,
+                    targetType: 'REFUND',
+                  },
+                });
+              }
+
+              result = projection.error
+                ? {
+                    processingError: projection.error,
+                    status: WebhookEventStatus.FAILED,
+                  }
+                : projection.stale
+                  ? {
+                      processingError:
+                        'The refund event would regress a terminal local state.',
+                      status: WebhookEventStatus.IGNORED,
+                    }
+                  : {
+                      processingError: null,
+                      status: WebhookEventStatus.PROCESSED,
+                    };
             } else {
-              status = await this.processPaymentTransition(transaction, action);
+              result = await this.processPaymentTransition(transaction, action);
             }
 
             await transaction.webhookEvent.update({
               where: { id: webhookEvent.id },
-              data: { processedAt: new Date(), status },
+              data: {
+                processedAt: new Date(),
+                processingError: result.processingError,
+                status: result.status,
+              },
             });
 
-            return { duplicate: false, status };
+            return { duplicate: false, status: result.status };
           },
-          { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+          { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted },
         );
       } catch (error: unknown) {
         if (
@@ -103,7 +166,7 @@ export class WebhooksRepository {
   private async processPaymentTransition(
     transaction: Prisma.TransactionClient,
     action: StripePaymentTransitionAction,
-  ): Promise<WebhookEventStatus> {
+  ): Promise<WebhookActionResult> {
     await transaction.$queryRaw(
       Prisma.sql`SELECT 1::integer AS acquired
         FROM pg_advisory_xact_lock(hashtextextended(${action.orderId}, 0))`,
@@ -141,7 +204,11 @@ export class WebhooksRepository {
       (action.targetStatus === PaymentStatus.SUCCEEDED &&
         action.providerPaymentId === null)
     ) {
-      return WebhookEventStatus.FAILED;
+      return {
+        processingError:
+          'Payment identifiers, amount, currency, or provider references mismatch.',
+        status: WebhookEventStatus.FAILED,
+      };
     }
 
     if (payment.status !== action.targetStatus) {
@@ -149,7 +216,11 @@ export class WebhooksRepository {
         assertPaymentTransition(payment.status, action.targetStatus);
       } catch (error: unknown) {
         if (error instanceof InvalidPaymentTransitionError) {
-          return WebhookEventStatus.IGNORED;
+          return {
+            processingError:
+              'The event would regress or skip the local payment state machine.',
+            status: WebhookEventStatus.IGNORED,
+          };
         }
 
         throw error;
@@ -160,7 +231,10 @@ export class WebhooksRepository {
       action.targetStatus === PaymentStatus.SUCCEEDED &&
       !this.canRepresentSuccessfulOrder(payment.order.status)
     ) {
-      return WebhookEventStatus.FAILED;
+      return {
+        processingError: 'The order cannot represent a successful payment.',
+        status: WebhookEventStatus.FAILED,
+      };
     }
 
     if (payment.status !== action.targetStatus) {
@@ -190,7 +264,10 @@ export class WebhooksRepository {
       });
     }
 
-    return WebhookEventStatus.PROCESSED;
+    return {
+      processingError: null,
+      status: WebhookEventStatus.PROCESSED,
+    };
   }
 
   private canRepresentSuccessfulOrder(status: OrderStatus): boolean {

@@ -244,6 +244,13 @@ export class OrdersService {
           currency: payment.currency,
           id: payment.id,
           provider: payment.provider,
+          refunds: payment.refunds.map((refund) => ({
+            amount: refund.amount,
+            createdAt: refund.createdAt.toISOString(),
+            id: refund.id,
+            status: refund.status,
+            updatedAt: refund.updatedAt.toISOString(),
+          })),
           status: payment.status,
         }),
       ),

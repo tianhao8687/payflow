@@ -14,7 +14,10 @@ export type CheckoutOrder = Prisma.OrderGetPayload<{
 }>;
 
 export type PaymentWithCount = Prisma.PaymentGetPayload<{
-  include: { _count: { select: { attempts: true } } };
+  include: {
+    _count: { select: { attempts: true } };
+    refunds: true;
+  };
 }>;
 
 export interface PaymentReservation {
@@ -33,6 +36,7 @@ export interface CompletedCheckoutData {
 
 const withAttemptCount = {
   _count: { select: { attempts: true } },
+  refunds: { orderBy: { createdAt: 'desc' as const } },
 } as const;
 
 @Injectable()

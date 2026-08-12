@@ -3,6 +3,7 @@ import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from './generated/prisma/client';
 
 export {
+  AuditActorType,
   OrderStatus,
   PaymentAttemptStatus,
   PaymentProvider,
@@ -10,14 +11,17 @@ export {
   Prisma,
   PrismaClient,
   Role,
+  RefundStatus,
   WebhookEventStatus,
 } from './generated/prisma/client';
 export type {
+  AuditLog,
   Order,
   OrderItem,
   Payment,
   PaymentAttempt,
   Product,
+  Refund,
   User,
   WebhookEvent,
 } from './generated/prisma/client';

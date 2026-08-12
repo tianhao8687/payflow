@@ -4,7 +4,7 @@ Date: 2026-08-13
 
 Status: Accepted
 
-Next stage: Stage 5 not started
+Next stage: Stage 5 implemented on 2026-08-13
 
 ## 1. Stage objective
 
@@ -44,9 +44,10 @@ docker-compose.yml
   non-PayFlow signed events are persisted and acknowledged as ignored.
 - Amount, currency, metadata, provider IDs, and sandbox mode are validated
   before explicit Payment and Order transitions.
-- Event result, Payment success, and Order paid state commit in one serializable
+- Event result, Payment success, and Order paid state commit in one locked
   transaction. Order advisory and row locks prevent races across different
-  events and cancellation.
+  events and cancellation. Stage 5 refined isolation to `READ COMMITTED` after
+  concurrent delivery testing; ADR 0008 records why.
 - Success/refund terminal states cannot move backward when an older failure or
   processing event arrives.
 
@@ -107,7 +108,7 @@ and a signed amount mismatch cannot change Payment or Order.
 
 - Stripe CLI forwarding is an operator workflow and is not required on GitHub
   runners; CI uses official local signature construction.
-- Refund webhook mapping remains Stage 5.
+- Refund webhook mapping was delivered in Stage 5.
 - Queue-based asynchronous processing remains Stage 8.
 
 ## 9. Acceptance checklist

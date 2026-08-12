@@ -142,6 +142,7 @@ describe('OrdersService', () => {
           provider: PaymentProvider.STRIPE,
           providerCheckoutSessionId: 'cs_test_active',
           providerPaymentId: null,
+          refunds: [],
           status: PaymentStatus.PENDING,
           updatedAt: new Date('2026-08-12T12:01:00.000Z'),
         },

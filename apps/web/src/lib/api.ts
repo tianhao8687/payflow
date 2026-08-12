@@ -49,6 +49,15 @@ export type PaymentStatus =
   | 'FAILED'
   | 'PARTIALLY_REFUNDED'
   | 'REFUNDED';
+export type RefundStatus = 'PENDING' | 'SUCCEEDED' | 'FAILED';
+
+export interface RefundSummary {
+  id: string;
+  amount: number;
+  status: RefundStatus;
+  createdAt: string;
+  updatedAt: string;
+}
 
 export interface OrderPaymentSummary {
   id: string;
@@ -57,6 +66,7 @@ export interface OrderPaymentSummary {
   amount: number;
   currency: string;
   createdAt: string;
+  refunds: RefundSummary[];
 }
 
 export interface OrderItem {
@@ -100,12 +110,151 @@ export interface PaymentRecord {
   providerCallCount: number;
   createdAt: string;
   updatedAt: string;
+  refunds: RefundSummary[];
 }
 
 export interface CheckoutSessionResponse {
   checkoutUrl: string;
   expiresAt: string;
   payment: PaymentRecord;
+  reused: boolean;
+}
+
+export interface AdminCurrencyAmount {
+  amount: number;
+  currency: string;
+}
+
+export interface AdminDashboard {
+  orderCount: number;
+  successfulPaymentCount: number;
+  failedPaymentCount: number;
+  refundTotals: AdminCurrencyAmount[];
+  failedWebhookCount: number;
+}
+
+export interface AdminPage<T> {
+  items: T[];
+  page: number;
+  pageSize: number;
+  total: number;
+  totalPages: number;
+}
+
+export interface AdminOrderListItem {
+  id: string;
+  orderNo: string;
+  status: OrderStatus;
+  currency: string;
+  totalAmount: number;
+  customerEmail: string;
+  itemCount: number;
+  paymentCount: number;
+  createdAt: string;
+}
+
+export interface AdminOrderItem {
+  id: string;
+  sku: string;
+  name: string;
+  unitPriceAmount: number;
+  quantity: number;
+  lineTotalAmount: number;
+}
+
+export interface AdminRefund {
+  id: string;
+  paymentId: string;
+  providerRefundId: string | null;
+  amount: number;
+  status: RefundStatus;
+  reason: string;
+  failureCode: string | null;
+  failureMessage: string | null;
+  currency: string;
+  orderNo: string;
+  customerEmail: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AdminPayment {
+  id: string;
+  orderId: string;
+  orderNo: string;
+  customerEmail: string;
+  provider: PaymentProvider;
+  status: PaymentStatus;
+  amount: number;
+  currency: string;
+  providerPaymentId: string | null;
+  providerAttemptCount: number;
+  refundedAmount: number;
+  reservedRefundAmount: number;
+  refunds: AdminRefund[];
+  createdAt: string;
+}
+
+export interface AdminPaymentAttempt {
+  id: string;
+  status: string;
+  providerRequestId: string | null;
+  errorCode: string | null;
+  errorMessage: string | null;
+  createdAt: string;
+}
+
+export interface AdminPaymentDetail extends AdminPayment {
+  providerCheckoutSessionId: string | null;
+  attempts: AdminPaymentAttempt[];
+}
+
+export interface AdminOrderDetail extends AdminOrderListItem {
+  userId: string;
+  subtotalAmount: number;
+  items: AdminOrderItem[];
+  payments: AdminPaymentDetail[];
+}
+
+export interface AdminWebhook {
+  id: string;
+  provider: PaymentProvider;
+  providerEventId: string;
+  eventType: string;
+  status: 'RECEIVED' | 'PROCESSED' | 'IGNORED' | 'FAILED';
+  deliveryCount: number;
+  processingError: string | null;
+  receivedAt: string;
+  lastReceivedAt: string;
+  processedAt: string | null;
+}
+
+export interface AdminAuditLog {
+  id: string;
+  actorType: 'ADMIN' | 'SYSTEM';
+  actorId: string | null;
+  actorEmail: string | null;
+  action: string;
+  targetType: string;
+  targetId: string;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+}
+
+export interface CreateRefundResponse {
+  refund: {
+    id: string;
+    paymentId: string;
+    refundRequestId: string;
+    providerRefundId: string | null;
+    amount: number;
+    status: RefundStatus;
+    reason: string;
+    failureCode: string | null;
+    failureMessage: string | null;
+    createdAt: string;
+    updatedAt: string;
+  };
   reused: boolean;
 }
 

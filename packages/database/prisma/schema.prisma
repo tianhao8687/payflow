@@ -49,13 +49,25 @@ enum WebhookEventStatus {
   FAILED
 }
 
+enum RefundStatus {
+  PENDING
+  SUCCEEDED
+  FAILED
+}
+
+enum AuditActorType {
+  ADMIN
+  SYSTEM
+}
+
 model User {
-  id           String   @id @default(uuid()) @db.Uuid
-  email        String   @unique @db.VarChar(320)
-  passwordHash String   @map("password_hash") @db.VarChar(100)
-  role         Role     @default(USER)
-  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  id           String     @id @default(uuid()) @db.Uuid
+  email        String     @unique @db.VarChar(320)
+  passwordHash String     @map("password_hash") @db.VarChar(100)
+  role         Role       @default(USER)
+  createdAt    DateTime   @default(now()) @map("created_at") @db.Timestamptz(3)
   orders       Order[]
+  auditLogs    AuditLog[]
 
   @@map("users")
 }
@@ -88,7 +100,7 @@ model Order {
   payments       Payment[]
 
   @@index([userId, createdAt])
-  @@index([status])
+  @@index([status, createdAt])
   @@map("orders")
 }
 
@@ -126,11 +138,13 @@ model Payment {
   updatedAt                 DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
   order                     Order            @relation(fields: [orderId], references: [id], onDelete: Restrict)
   attempts                  PaymentAttempt[]
+  refunds                   Refund[]
 
   @@unique([provider, providerPaymentId])
   @@unique([orderId, provider, attemptNo])
   @@index([orderId, createdAt])
   @@index([status])
+  @@index([provider, status, createdAt])
   @@map("payments")
 }
 
@@ -155,10 +169,54 @@ model WebhookEvent {
   eventType       String             @map("event_type") @db.VarChar(255)
   payloadJson     Json               @map("payload_json") @db.JsonB
   status          WebhookEventStatus @default(RECEIVED)
+  deliveryCount   Int                @default(1) @map("delivery_count")
+  processingError String?            @map("processing_error") @db.VarChar(500)
   receivedAt      DateTime           @default(now()) @map("received_at") @db.Timestamptz(3)
+  lastReceivedAt  DateTime           @default(now()) @map("last_received_at") @db.Timestamptz(3)
   processedAt     DateTime?          @map("processed_at") @db.Timestamptz(3)
 
   @@index([provider, receivedAt])
   @@index([status, receivedAt])
+  @@index([eventType, receivedAt])
   @@map("webhook_events")
+}
+
+model Refund {
+  id                String       @id @default(uuid()) @db.Uuid
+  paymentId         String       @map("payment_id") @db.Uuid
+  refundRequestId   String       @map("refund_request_id") @db.Uuid
+  providerRefundId  String?      @unique @map("provider_refund_id") @db.VarChar(255)
+  amount            Int
+  status            RefundStatus @default(PENDING)
+  reason            String       @db.VarChar(500)
+  idempotencyKey    String       @unique @map("idempotency_key") @db.VarChar(255)
+  providerRequestId String?      @map("provider_request_id") @db.VarChar(255)
+  failureCode       String?      @map("failure_code") @db.VarChar(100)
+  failureMessage    String?      @map("failure_message") @db.VarChar(500)
+  createdAt         DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt         DateTime     @updatedAt @map("updated_at") @db.Timestamptz(3)
+  payment           Payment      @relation(fields: [paymentId], references: [id], onDelete: Restrict)
+
+  @@unique([paymentId, refundRequestId])
+  @@index([paymentId, createdAt])
+  @@index([status, createdAt])
+  @@map("refunds")
+}
+
+model AuditLog {
+  id           String         @id @default(uuid()) @db.Uuid
+  actorType    AuditActorType @map("actor_type")
+  actorId      String?        @map("actor_id") @db.Uuid
+  action       String         @db.VarChar(100)
+  targetType   String         @map("target_type") @db.VarChar(100)
+  targetId     String         @map("target_id") @db.VarChar(255)
+  metadataJson Json           @map("metadata_json") @db.JsonB
+  createdAt    DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
+  actor        User?          @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([actorId, createdAt])
+  @@index([action, createdAt])
+  @@index([targetType, targetId, createdAt])
+  @@index([createdAt])
+  @@map("audit_logs")
 }

@@ -1,6 +1,8 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { PaymentProvider, PaymentStatus } from '@payflow/database';
 
+import { RefundSummaryResponseDto } from '../../refunds/dto/refund-response.dto';
+
 export class PaymentResponseDto {
   @ApiProperty({ format: 'uuid' })
   id!: string;
@@ -37,6 +39,9 @@ export class PaymentResponseDto {
 
   @ApiProperty({ format: 'date-time' })
   updatedAt!: string;
+
+  @ApiProperty({ type: [RefundSummaryResponseDto] })
+  refunds!: RefundSummaryResponseDto[];
 }
 
 export class CheckoutSessionResponseDto {

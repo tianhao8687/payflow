@@ -170,6 +170,7 @@ function createReservation(): PaymentReservation {
     provider: PaymentProvider.STRIPE,
     providerCheckoutSessionId: null,
     providerPaymentId: null,
+    refunds: [],
     status: PaymentStatus.CREATED,
     updatedAt: now,
   };

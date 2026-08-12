@@ -24,7 +24,7 @@ flowchart TD
   Existing -->|No| Persist[Insert webhook_events JSONB row]
   Persist --> Map{Recognized PayFlow event?}
   Map -->|No| Ignore[Mark IGNORED and return 200]
-  Map -->|Yes| OrderLock[Order advisory + row locks]
+  Map -->|Payment or refund| OrderLock[Order advisory + row locks]
   OrderLock --> Validate{IDs, provider, amount, currency valid?}
   Validate -->|No| Failed[Mark FAILED; non-2xx; no business mutation]
   Validate -->|Yes| Transition{State transition allowed?}
@@ -41,13 +41,19 @@ credentials.
 
 ## Transaction and state rules
 
-- The inbox insert, event result, Payment update, and Order update use one
-  serializable transaction.
+- The inbox insert, event result, Refund/Payment/Order update, and optional
+  system audit use one `READ COMMITTED` transaction with explicit advisory and
+  row locks. Queries after a waited lock see the newest committed state.
 - Order-scoped advisory locking is shared with payment reservation and unpaid
   cancellation. Database row locks serialize distinct events for one payment.
 - Every state change calls the explicit Payment or Order transition function.
 - A successful event can move `PENDING`/`PROCESSING → SUCCEEDED` and
   `PENDING_PAYMENT → PAID` atomically.
+- Current Stripe `refund.created`, `refund.updated`, and `refund.failed` events
+  validate the local Refund ID, PaymentIntent, amount, and currency before
+  moving `PENDING → SUCCEEDED | FAILED` and projecting aggregate refund state.
+- `charge.refunded` is signed and persisted but audit-only; current Refund
+  events are the detailed lifecycle authority.
 - Once a Payment is successful or in a refund state, an older processing or
   failure event is persisted as `IGNORED`; status cannot move backward.
 - A repeat of the same successful provider Event returns the persisted result.
@@ -60,10 +66,11 @@ credentials.
 Use Stripe CLI forwarding and the `whsec_...` value printed by that listener:
 
 ```powershell
-stripe listen --events checkout.session.completed,checkout.session.async_payment_succeeded,checkout.session.async_payment_failed,payment_intent.processing,payment_intent.succeeded,payment_intent.payment_failed --forward-to localhost:4000/webhooks/stripe
+stripe listen --events checkout.session.completed,checkout.session.async_payment_succeeded,checkout.session.async_payment_failed,payment_intent.processing,payment_intent.succeeded,payment_intent.payment_failed,refund.created,refund.updated,refund.failed,charge.refunded --forward-to localhost:4000/webhooks/stripe
 ```
 
 The automated E2E suite uses Stripe's official signing helper against the real
 NestJS raw-body route and PostgreSQL. It proves valid and invalid signatures,
-five concurrent duplicate deliveries, unknown events, integrity rejection, and
-out-of-order protection without requiring a network tunnel in CI.
+five concurrent duplicate deliveries, unknown events, integrity rejection,
+pending refund finalization, duplicate Refund delivery, and out-of-order
+protection without requiring a network tunnel in CI.

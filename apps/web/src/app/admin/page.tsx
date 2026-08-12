@@ -3,7 +3,7 @@ import type { Metadata } from 'next';
 import { AdminBoundary } from '@/components/admin-boundary';
 
 export const metadata: Metadata = {
-  title: 'Admin boundary',
+  title: 'Payment operations',
 };
 
 export default function AdminPage() {

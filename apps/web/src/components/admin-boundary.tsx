@@ -5,6 +5,7 @@ import { useEffect, useState } from 'react';
 
 import { ApiError, apiRequest, type User } from '@/lib/api';
 
+import { AdminConsole } from './admin-console';
 import { useAuth } from './auth-provider';
 
 type BoundaryState =
@@ -111,29 +112,7 @@ export function AdminBoundary() {
     );
   }
 
-  return (
-    <section className="mx-auto max-w-[1000px] px-5 py-14 sm:px-8 sm:py-20 lg:px-16">
-      <div className="border border-[#80cdbd] bg-[#edf9f6] p-6 sm:p-10">
-        <p className="font-mono text-xs font-bold tracking-[0.15em] text-[#087f6a] uppercase">
-          200 / ADMIN verified
-        </p>
-        <h1 className="mt-4 text-4xl font-bold tracking-[-0.055em] sm:text-6xl">
-          Administrator boundary passed.
-        </h1>
-        <p className="mt-5 max-w-2xl text-lg leading-8 text-[#43635c]">
-          The NestJS API validated the JWT and ADMIN role before returning this
-          safe profile DTO. This is a boundary verifier, not the Stage 5 admin
-          business console.
-        </p>
-      </div>
-
-      <dl className="mt-8 divide-y divide-[#d7dbe2] border-y border-[#080a0f]">
-        <AdminFact label="Email" value={boundary.profile.email} />
-        <AdminFact label="Role" value={boundary.profile.role} />
-        <AdminFact label="Decision" value="Granted by /admin/profile" />
-      </dl>
-    </section>
-  );
+  return <AdminConsole profile={boundary.profile} token={token} />;
 }
 
 function BoundaryMessage({
@@ -160,17 +139,6 @@ function BoundaryMessage({
       </p>
       <div className="mt-8 flex justify-center">{children}</div>
     </section>
-  );
-}
-
-function AdminFact({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="grid gap-2 py-5 sm:grid-cols-[160px_minmax(0,1fr)]">
-      <dt className="text-sm font-semibold text-[#555b66]">{label}</dt>
-      <dd className="break-words font-mono text-sm font-bold sm:text-base">
-        {value}
-      </dd>
-    </div>
   );
 }
 

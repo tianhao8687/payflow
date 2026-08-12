@@ -28,12 +28,15 @@ export interface OrderDraft {
 }
 
 export type OrderWithItems = Prisma.OrderGetPayload<{
-  include: { items: true; payments: true };
+  include: { items: true; payments: { include: { refunds: true } } };
 }>;
 
 const includeItems = {
   items: { orderBy: { skuSnapshot: 'asc' as const } },
-  payments: { orderBy: { createdAt: 'desc' as const } },
+  payments: {
+    include: { refunds: { orderBy: { createdAt: 'desc' as const } } },
+    orderBy: { createdAt: 'desc' as const },
+  },
 } as const;
 
 @Injectable()

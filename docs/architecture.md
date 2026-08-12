@@ -1,11 +1,10 @@
 # PayFlow architecture
 
-## Current boundary: Stage 4 accepted
+## Current boundary: Stage 5 implemented
 
-Stage 4 makes the signed server-side webhook the only payment-success authority.
-It adds exact raw-body verification, a durable transactional inbox, database
-deduplication, and atomic Payment/Order state transitions without changing the
-V1 modular-monolith boundary.
+Stage 5 adds serialized, idempotent refunds and an audited operations console to
+the signed webhook/payment authority from Stage 4. The V1 modular-monolith
+boundary and core domain model remain unchanged.
 
 ```mermaid
 flowchart TB
@@ -13,7 +12,7 @@ flowchart TB
     Catalog[Catalog and product detail]
     AuthUI[Register, login, account]
     Cart[Cart and order history/detail]
-    AdminUI[Admin boundary verifier]
+    AdminUI[Admin operations console]
   end
 
   subgraph ModularMonolith[NestJS modular monolith]
@@ -24,6 +23,8 @@ flowchart TB
     Payments[Payments module + state machine]
     StripeGateway[Stripe Checkout gateway]
     Webhooks[Webhooks module + event mapper]
+    Refunds[Refunds module + state machine]
+    Admin[Admin query module]
     StripeVerifier[Stripe signature verifier]
     Guards[JWT guard + roles guard]
     System[System and health module]
@@ -42,6 +43,8 @@ flowchart TB
   AuthUI -->|register / login| Auth
   AuthUI -->|Bearer JWT| Guards
   AdminUI -->|Bearer JWT + ADMIN| Guards
+  Guards --> Admin
+  Guards --> Refunds
   Guards --> Auth
   Auth --> Users
   Products --> DatabaseModule
@@ -51,6 +54,10 @@ flowchart TB
   Stripe -->|raw Event + signature| Webhooks
   Webhooks --> StripeVerifier
   Webhooks --> DatabaseModule
+  Webhooks --> Refunds
+  Refunds --> StripeRefunds[Stripe Refunds API]
+  Refunds --> DatabaseModule
+  Admin --> DatabaseModule
   Users --> DatabaseModule
   System --> DatabaseModule
   DatabaseModule --> Prisma --> Postgres
@@ -78,8 +85,8 @@ flowchart TB
   metadata opens system, health, registration, login, and product reads.
 - Public registration always writes `USER`; only the controlled seed can create
   or promote the Stage 1 `ADMIN` identity.
-- `/admin/profile` proves the API-side RBAC boundary. It intentionally contains
-  no Stage 5 refund or operations behavior.
+- `/admin/profile` proves the API-side RBAC boundary; Stage 5 administration
+  routes reuse the same server-side guard.
 - Authentication endpoints are limited to five requests per minute per tracker;
   the remaining API uses a 120-request-per-minute baseline.
 
@@ -132,11 +139,35 @@ flowchart TB
   unique constraint is reached.
 - Recognized events lock the order/payment concurrency boundary, verify local
   IDs, provider references, amount, and currency, then call explicit transition
-  functions. `Payment → SUCCEEDED` and `Order → PAID` commit in the same
-  serializable transaction.
+  functions. `Payment → SUCCEEDED` and `Order → PAID` commit in the same locked
+  transaction.
 - Terminal success/refund states cannot move backward when an older failed or
   processing event arrives. Deterministic integrity failures persist as
   `FAILED` and return a non-2xx response without changing business state.
+
+## Stage 5 refund and administration boundary
+
+- `POST /admin/payments/:id/refunds` requires ADMIN and accepts a stable request
+  UUID, audit reason, and optional positive integer amount. Omitting amount
+  means the full remaining balance.
+- The repository takes the shared order advisory lock plus order/payment row
+  locks before summing pending and successful Refund rows. Reservation and
+  `REFUND_REQUESTED` audit commit before the provider call.
+- Stripe receives `refund:create:{paymentId}:{refundRequestId}`. Unknown network
+  outcomes remain `PENDING` for same-key retry; deterministic provider rejection
+  becomes `FAILED`.
+- Direct provider responses and signed `refund.created`, `refund.updated`, and
+  `refund.failed` events use the same locked projection. They validate local and
+  provider IDs, amount, and currency before explicit Refund, Payment, and Order
+  transitions.
+- `charge.refunded` is retained as a signed audit-only event under the current
+  Stripe Refund event model, preventing two competing detail sources.
+- All administrator list endpoints are filtered, bounded, paginated, and
+  supported by status/time/provider indexes. Refund dashboard totals are grouped
+  by currency.
+- The Next.js operations console renders dashboard, order/payment detail,
+  provider attempts, full/partial refund submission, webhook delivery counts
+  and errors, and audit metadata. Browser visibility never replaces API RBAC.
 
 ## Data boundary
 
@@ -149,9 +180,12 @@ price, quantity, and line-total snapshots. `payments` stores provider lifecycle,
 amount, idempotency, and Checkout references; `payment_attempts` records provider
 calls. PostgreSQL checks enforce lowercase
 emails, nonnegative money/stock, positive item quantities, arithmetic equality,
-and uppercase three-letter currency. `webhook_events` stores the original
-verified Event JSON, provider ID/type, processing state, and receive/process
-timestamps; it never stores card numbers or CVC data added by PayFlow.
+and uppercase three-letter currency. `refunds` stores request/provider identity,
+integer amount, lifecycle, reason, and provider failure details. `audit_logs`
+stores administrator/system actor, action, target, JSON metadata, and timestamp.
+`webhook_events` stores the original verified Event JSON, provider ID/type,
+delivery count, processing state/error, and receive/process timestamps; none of
+these tables store card numbers or CVC data added by PayFlow.
 
 ## Runtime topology
 
@@ -167,6 +201,6 @@ The API validates environment variables at startup. Request IDs and the shared
 
 ## Deferred boundaries
 
-- Refund operations and the admin business console — Stage 5.
-- `apps/worker`, Redis/BullMQ, provider packages, outbox, ledger, and
-  reconciliation — their specified later stages.
+- Provider adapters — Stage 7.
+- `apps/worker`, Redis/BullMQ, PayPal, outbox, ledger, and reconciliation —
+  their specified later stages.

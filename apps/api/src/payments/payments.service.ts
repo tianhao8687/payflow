@@ -244,6 +244,13 @@ export class PaymentsService {
       providerCallCount: payment._count.attempts,
       providerCheckoutSessionId: payment.providerCheckoutSessionId,
       providerPaymentId: payment.providerPaymentId,
+      refunds: payment.refunds.map((refund) => ({
+        amount: refund.amount,
+        createdAt: refund.createdAt.toISOString(),
+        id: refund.id,
+        status: refund.status,
+        updatedAt: refund.updatedAt.toISOString(),
+      })),
       status: payment.status,
       updatedAt: payment.updatedAt.toISOString(),
     };

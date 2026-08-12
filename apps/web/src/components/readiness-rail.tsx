@@ -8,22 +8,22 @@ import {
 const readinessItems = [
   {
     title: 'Web',
-    detail: 'Next.js catalog + auth UI',
+    detail: 'Next.js catalog + admin console',
     icon: CodeIcon,
   },
   {
     title: 'API',
-    detail: 'NestJS JWT + RBAC',
+    detail: 'NestJS payment domains + RBAC',
     icon: ServerIcon,
   },
   {
     title: 'Data',
-    detail: 'User + Product models',
+    detail: 'Orders + payments + refunds',
     icon: DatabaseIcon,
   },
   {
     title: 'Delivery',
-    detail: 'Docker Compose + GitHub Actions',
+    detail: 'PostgreSQL locks + CI gates',
     icon: ContainerIcon,
   },
 ] as const;

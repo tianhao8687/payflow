@@ -1,10 +1,11 @@
-import { PaymentStatus } from '@payflow/database';
+import { PaymentStatus, RefundStatus } from '@payflow/database';
 import Stripe from 'stripe';
 
 import { mapStripeWebhookEvent } from './stripe-webhook-event';
 
 const orderId = '22222222-2222-4222-8222-222222222222';
 const paymentId = '11111111-1111-4111-8111-111111111111';
+const refundId = '33333333-3333-4333-8333-333333333333';
 
 describe('mapStripeWebhookEvent', () => {
   it('maps a paid Checkout Session to a successful local payment', () => {
@@ -69,6 +70,49 @@ describe('mapStripeWebhookEvent', () => {
     });
   });
 
+  it('maps current Stripe refund events to an asynchronous refund snapshot', () => {
+    const action = mapStripeWebhookEvent(
+      event(
+        'refund.updated',
+        {
+          amount: 1200,
+          currency: 'usd',
+          failure_reason: null,
+          id: 're_test_payflow',
+          metadata: { orderId, paymentId, refundId },
+          object: 'refund',
+          payment_intent: 'pi_test_payflow',
+          status: 'succeeded',
+        },
+        false,
+        { id: 'req_refund_webhook', idempotency_key: null },
+      ),
+    );
+
+    expect(action).toEqual({
+      amount: 1200,
+      currency: 'USD',
+      failureCode: null,
+      failureMessage: null,
+      kind: 'REFUND_SYNC',
+      orderId,
+      paymentId,
+      providerPaymentId: 'pi_test_payflow',
+      providerRefundId: 're_test_payflow',
+      providerRequestId: 'req_refund_webhook',
+      refundId,
+      status: RefundStatus.SUCCEEDED,
+    });
+  });
+
+  it('keeps charge.refunded audit-only under the current Stripe event model', () => {
+    expect(
+      mapStripeWebhookEvent(
+        event('charge.refunded', { id: 'ch_test', object: 'charge' }),
+      ),
+    ).toMatchObject({ kind: 'IGNORE' });
+  });
+
   it('ignores unknown events and recognized events without PayFlow metadata', () => {
     expect(
       mapStripeWebhookEvent(
@@ -111,6 +155,7 @@ function event(
   type: Stripe.Event.Type,
   object: Record<string, unknown>,
   livemode = false,
+  request: Stripe.Event.Request | null = null,
 ): Stripe.Event {
   return {
     api_version: '2026-07-29.dahlia',
@@ -120,7 +165,7 @@ function event(
     livemode,
     object: 'event',
     pending_webhooks: 1,
-    request: null,
+    request,
     type,
   } as unknown as Stripe.Event;
 }
