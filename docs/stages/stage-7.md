@@ -2,9 +2,9 @@
 
 Date: 2026-08-13
 
-Status: Local gate passed; remote CI pending
+Status: Accepted
 
-Next stage: Blocked until Stage 7 is accepted
+Next stage: Stage 8 may begin
 
 ## 1. Stage objective
 
@@ -105,7 +105,7 @@ database migration deploy/status        PASS (7 migrations, up to date)
 full monorepo format/lint/typecheck      PASS
 Next.js + NestJS + package builds        PASS
 real Stripe Test adapter checkout       PASS (one provider call; same-session replay)
-remote GitHub Actions                    PENDING
+remote GitHub Actions                    PASS (run 31624062364, 2m 2s)
 ```
 
 The 502/500 entries emitted by Failure Lab scenarios 4, 5, and 8 remain expected
@@ -131,9 +131,10 @@ fault injection; all recovery assertions passed.
 - [x] Existing business and Stage 6 database E2E behavior remains passing.
 - [x] Real Stripe Test Checkout works through `StripeProvider` and remains idempotent.
 - [x] Full local static, unit, E2E, and production-build gates pass.
-- [ ] GitHub Actions passes the committed Stage 7 implementation.
+- [x] GitHub Actions passes the committed Stage 7 implementation (run
+      `31624062364`).
 
 ## 10. Phase gate
 
-Stage 7 is not yet accepted. Stage 8 must not begin until the remaining local
-and remote checklist items pass and this record is updated with final evidence.
+Stage 7 is accepted. Every local and remote checklist item passed, so Stage 8
+may begin in the prescribed sequence.

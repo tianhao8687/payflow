@@ -4,10 +4,10 @@ PayFlow is a full-stack payment-system portfolio project implemented one
 acceptance-gated stage at a time from the accompanying Codex implementation
 specification.
 
-> Current delivery: **Stage 7 — Provider Adapter (local gate passed)**.
+> Current delivery: **Stage 7 — Provider Adapter (accepted)**.
 > Payment creation, lookup, optional capture/cancel, refunds, status mapping,
 > errors, and webhook verification now cross a provider-neutral contract.
-> Remote acceptance remains gated on the committed GitHub Actions run.
+> Local verification and the committed GitHub Actions gate both pass.
 
 ## Current architecture
 

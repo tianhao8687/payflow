@@ -1,6 +1,6 @@
 # PayFlow architecture
 
-## Current boundary: Stage 7 implementation complete
+## Current boundary: Stage 7 accepted
 
 Stage 7 moves every production Stripe SDK interaction behind a provider-neutral
 contract while preserving the Stage 6 reliability gates. The modular-monolith
