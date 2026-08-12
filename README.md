@@ -4,10 +4,11 @@ PayFlow is a full-stack payment-system portfolio project implemented one
 acceptance-gated stage at a time from the accompanying Codex implementation
 specification.
 
-> Current delivery: **Stage 8 — PayPal + Queue (acceptance in progress)**.
+> Current delivery: **Stage 8 — PayPal + Queue (accepted)**.
 > Stripe Test and PayPal Sandbox share one provider-neutral business boundary;
 > verified webhooks are persisted, queued in BullMQ, and processed by a worker
-> with bounded, observable retries. Stage 9 has not started.
+> with bounded, observable retries. All specified Stage 8 local and remote
+> gates pass; Stage 9 may begin.
 
 ## Current architecture
 

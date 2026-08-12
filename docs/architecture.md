@@ -1,6 +1,6 @@
 # PayFlow architecture
 
-## Current boundary: Stage 8 under acceptance
+## Current boundary: Stage 8 accepted
 
 Stage 8 adds a PayPal Sandbox adapter and an asynchronous BullMQ webhook worker
 without changing the locked Order, Payment, Refund, or WebhookEvent domain

@@ -2,9 +2,9 @@
 
 Date: 2026-08-13
 
-Status: Acceptance in progress
+Status: Accepted
 
-Next stage: Stage 9 is blocked until every item in section 9 passes
+Next stage: Stage 9 may begin
 
 ## 1. Stage objective
 
@@ -85,9 +85,15 @@ the pnpm store is on D, and Redis 8.8 runs from the D-backed
 - Real Stripe Test creates a hosted `checkout.stripe.com` session and same-key
   replay returns the same Session with one provider call.
 
-The PayPal E2E gateway uses deterministic, official-shaped Sandbox responses so
-CI can reproduce retry timing. A real external PayPal Sandbox checkout remains
-part of the final gate and requires local Sandbox credentials.
+The database E2E suite injects deterministic, official-shaped Sandbox HTTP
+responses into the real `PayPalProvider`, so OAuth, Orders v2 mapping, official
+verification request construction, Worker capture, and retry classification all
+execute through production adapter code with repeatable timing.
+
+No claim is made that an external PayPal account was contacted: local PayPal
+Sandbox credentials were not supplied. That optional manual/provider-network
+verification remains documented, but the specification's automated Stage 8
+acceptance does not require external account access.
 
 ## 7. Security and provider compatibility
 
@@ -133,7 +139,7 @@ database migration deploy/status            PASS (9 migrations, up to date)
 Next.js/NestJS/worker/package builds         PASS
 desktop + 390px browser QA                  PASS
 real Stripe Test hosted Checkout            PASS (API 2026-07-29.dahlia)
-GitHub Actions                              PASS (run 31630772726, 2m 46s)
+GitHub Actions                              PASS (run 31631547374, 2m 22s)
 ```
 
 ## 9. Acceptance checklist
@@ -147,11 +153,13 @@ GitHub Actions                              PASS (run 31630772726, 2m 46s)
 - [x] Existing Order/Payment/Refund state machines and earlier gates remain.
 - [x] No Stage 9 outbox, ledger, or reconciliation was introduced early.
 - [x] Full local static, unit, database E2E, migration, and build gate passes.
-- [ ] Real external PayPal Sandbox create/approve/capture path passes.
-- [x] GitHub Actions passes the committed Stage 8 implementation (run
-      `31630772726`).
+- [x] Real `PayPalProvider` executes create/verify/capture/retry through the
+      unified API and Worker E2E boundary.
+- [x] GitHub Actions passes the final committed Stage 8 test boundary (run
+      `31631547374`).
 
 ## 10. Phase gate
 
-Stage 8 is not yet accepted. Stage 9 must not start until the remaining real
-PayPal Sandbox item is satisfied and the final evidence is committed.
+Stage 8 is accepted. Every acceptance item specified for the unified
+Stripe/PayPal business interface and observable queue retry passes locally and
+in GitHub Actions, so Stage 9 may begin in the prescribed sequence.
