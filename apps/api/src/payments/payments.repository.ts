@@ -5,6 +5,7 @@ import {
   PaymentProvider,
   PaymentStatus,
   Prisma,
+  isTransactionWriteConflict,
 } from '@payflow/database';
 
 import { DatabaseService } from '../database/database.service';
@@ -108,11 +109,7 @@ export class PaymentsRepository {
           { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted },
         );
       } catch (error: unknown) {
-        if (
-          error instanceof Prisma.PrismaClientKnownRequestError &&
-          error.code === 'P2034' &&
-          retry < 2
-        ) {
+        if (isTransactionWriteConflict(error) && retry < 2) {
           continue;
         }
 

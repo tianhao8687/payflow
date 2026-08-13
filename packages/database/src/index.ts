@@ -1,6 +1,6 @@
 import { PrismaPg } from '@prisma/adapter-pg';
 
-import { PrismaClient } from './generated/prisma/client';
+import { Prisma, PrismaClient } from './generated/prisma/client';
 
 export {
   AuditActorType,
@@ -47,4 +47,29 @@ export function createPrismaClient(databaseUrl: string): PrismaClient {
   const adapter = new PrismaPg({ connectionString: databaseUrl });
 
   return new PrismaClient({ adapter });
+}
+
+export function isTransactionWriteConflict(error: unknown): boolean {
+  if (
+    error instanceof Prisma.PrismaClientKnownRequestError &&
+    error.code === 'P2034'
+  ) {
+    return true;
+  }
+
+  if (!(error instanceof Error) || error.name !== 'DriverAdapterError') {
+    return false;
+  }
+
+  const cause = error.cause;
+  if (typeof cause !== 'object' || cause === null) {
+    return false;
+  }
+
+  const details = cause as { kind?: unknown; originalCode?: unknown };
+  return (
+    error.message === 'TransactionWriteConflict' &&
+    (details.kind === 'TransactionWriteConflict' ||
+      details.originalCode === '40001')
+  );
 }

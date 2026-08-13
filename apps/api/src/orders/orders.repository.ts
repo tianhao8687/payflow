@@ -3,6 +3,7 @@ import {
   OrderStatus,
   PaymentStatus,
   Prisma,
+  isTransactionWriteConflict,
   type Product,
 } from '@payflow/database';
 
@@ -43,36 +44,48 @@ const includeItems = {
 export class OrdersRepository {
   constructor(private readonly database: DatabaseService) {}
 
-  createFromCart(
+  async createFromCart(
     userId: string,
     orderNo: string,
     cartItems: NormalizedCartItem[],
     buildDraft: (products: Product[]) => OrderDraft,
   ): Promise<OrderWithItems> {
-    return this.database.prisma.$transaction(
-      async (transaction) => {
-        const products = await transaction.product.findMany({
-          where: {
-            id: { in: cartItems.map((item) => item.productId) },
-          },
-        });
-        const draft = buildDraft(products);
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      try {
+        return await this.database.prisma.$transaction(
+          async (transaction) => {
+            const products = await transaction.product.findMany({
+              where: {
+                id: { in: cartItems.map((item) => item.productId) },
+              },
+            });
+            const draft = buildDraft(products);
 
-        return transaction.order.create({
-          data: {
-            currency: draft.currency,
-            items: { create: draft.items },
-            orderNo,
-            status: OrderStatus.PENDING_PAYMENT,
-            subtotalAmount: draft.subtotalAmount,
-            totalAmount: draft.totalAmount,
-            userId,
+            return transaction.order.create({
+              data: {
+                currency: draft.currency,
+                items: { create: draft.items },
+                orderNo,
+                status: OrderStatus.PENDING_PAYMENT,
+                subtotalAmount: draft.subtotalAmount,
+                totalAmount: draft.totalAmount,
+                userId,
+              },
+              include: includeItems,
+            });
           },
-          include: includeItems,
-        });
-      },
-      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
-    );
+          { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+        );
+      } catch (error: unknown) {
+        if (isTransactionWriteConflict(error) && attempt < 4) {
+          continue;
+        }
+
+        throw error;
+      }
+    }
+
+    throw new Error('Order creation retry limit was exhausted.');
   }
 
   findOwnedById(id: string, userId: string): Promise<OrderWithItems | null> {
@@ -140,11 +153,7 @@ export class OrdersRepository {
           { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted },
         );
       } catch (error: unknown) {
-        if (
-          error instanceof Prisma.PrismaClientKnownRequestError &&
-          error.code === 'P2034' &&
-          retry < 2
-        ) {
+        if (isTransactionWriteConflict(error) && retry < 2) {
           continue;
         }
 
