@@ -47,6 +47,28 @@ export class RefundsRepository {
     return payment?.provider ?? null;
   }
 
+  async beginProviderAttempt(
+    refundId: string,
+    now = new Date(),
+  ): Promise<boolean> {
+    const result = await this.database.prisma.refund.updateMany({
+      where: {
+        id: refundId,
+        status: RefundStatus.PENDING,
+        OR: [
+          { lastProviderAttemptAt: null },
+          {
+            lastProviderAttemptAt: {
+              lte: new Date(now.getTime() - 3_000),
+            },
+          },
+        ],
+      },
+      data: { lastProviderAttemptAt: now },
+    });
+    return result.count === 1;
+  }
+
   async reserve(
     paymentId: string,
     actorId: string,

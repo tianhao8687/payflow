@@ -452,6 +452,18 @@ export class AdminWebhookItemDto {
   @ApiProperty()
   processingAttempts!: number;
 
+  @ApiProperty()
+  dispatchAttempts!: number;
+
+  @ApiPropertyOptional()
+  dispatchError!: string | null;
+
+  @ApiProperty({ format: 'date-time' })
+  nextDispatchAt!: string;
+
+  @ApiPropertyOptional({ format: 'date-time' })
+  lastDispatchAttemptAt!: string | null;
+
   @ApiPropertyOptional()
   queueJobId!: string | null;
 

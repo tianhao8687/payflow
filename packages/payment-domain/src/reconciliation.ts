@@ -1,5 +1,6 @@
 import {
   PaymentStatus,
+  PaymentProvider as DatabasePaymentProvider,
   Prisma,
   ReconciliationIssueStatus,
   ReconciliationIssueType,
@@ -38,7 +39,7 @@ interface LocalPaymentSnapshot {
   amount: number;
   currency: string;
   paymentId: string;
-  providerPaymentId: string;
+  providerPaymentId: string | null;
   refundedAmount: number;
   status: ProviderPaymentStatus;
 }
@@ -46,10 +47,22 @@ interface LocalPaymentSnapshot {
 interface ProviderPaymentSnapshot {
   amount: number;
   currency: string;
-  providerPaymentId: string;
+  providerPaymentId: string | null;
   providerRequestId: string | null;
   refundedAmount: number | null;
   status: ProviderPaymentStatus;
+}
+
+interface ReconciliationPayment {
+  amount: number;
+  currency: string;
+  id: string;
+  provider: DatabasePaymentProvider;
+  providerCheckoutSessionId: string | null;
+  providerPaymentId: string | null;
+  refunds: Array<{ amount: number }>;
+  status: PaymentStatus;
+  updatedAt: Date;
 }
 
 export class ReconciliationService {
@@ -75,97 +88,55 @@ export class ReconciliationService {
     };
 
     try {
-      const payments = await this.prisma.payment.findMany({
-        where: {
-          providerPaymentId: { not: null },
-          updatedAt: { gte: window.windowStart, lt: window.windowEnd },
-        },
-        include: {
-          refunds: {
-            where: { status: RefundStatus.SUCCEEDED },
-            select: { amount: true },
-          },
-        },
-        orderBy: { updatedAt: 'asc' },
-        take: Math.min(Math.max(window.limit ?? 500, 1), 2_000),
-      });
-
-      for (const payment of payments) {
-        counts.checkedCount += 1;
-        const local = localSnapshot(payment);
-        let providerPayment: ProviderPayment;
-
-        try {
-          const provider = this.providers.require(payment.provider);
-          if (!provider.isConfigured(PaymentProviderCapability.PAYMENT)) {
-            throw new Error(
-              `${payment.provider} is not configured for reconciliation lookups.`,
-            );
-          }
-
-          providerPayment = await withSpan(
-            'provider.payment.reconcile',
-            {
-              attributes: {
-                'payment.provider': payment.provider,
-                'payflow.payment.id': payment.id,
+      const pageSize = Math.min(Math.max(window.limit ?? 250, 1), 500);
+      let cursor: { id: string; updatedAt: Date } | null = null;
+      let pageCount = 0;
+      while (true) {
+        const payments: ReconciliationPayment[] =
+          await this.prisma.payment.findMany({
+            where: {
+              updatedAt: { gte: window.windowStart, lt: window.windowEnd },
+              ...(cursor
+                ? {
+                    OR: [
+                      { updatedAt: { gt: cursor.updatedAt } },
+                      { id: { gt: cursor.id }, updatedAt: cursor.updatedAt },
+                    ],
+                  }
+                : {}),
+            },
+            include: {
+              refunds: {
+                where: { status: RefundStatus.SUCCEEDED },
+                select: { amount: true },
               },
-              kind: SpanKind.CLIENT,
             },
-            () => provider.getPayment(payment.providerPaymentId!),
-          );
-        } catch (error: unknown) {
-          counts.errorCount += 1;
-          await this.prisma.reconciliationCheck.create({
-            data: {
-              error: errorMessage(error).slice(0, 500),
-              localSnapshot: json(local),
-              matched: false,
-              paymentId: payment.id,
-              provider: payment.provider,
-              providerSnapshot: Prisma.JsonNull,
-              runId: run.id,
-            },
+            orderBy: [{ updatedAt: 'asc' }, { id: 'asc' }],
+            take: pageSize,
           });
-          continue;
+        if (payments.length === 0) {
+          break;
         }
-
-        const remote = providerSnapshot(providerPayment);
-        const issueTypes = differences(local, remote);
-        const check = await this.prisma.reconciliationCheck.create({
+        const results = await mapWithConcurrency(payments, 4, (payment) =>
+          this.reconcilePayment(run.id, payment),
+        );
+        for (const result of results) {
+          counts.checkedCount += 1;
+          counts.errorCount += result.errorCount;
+          counts.issueCount += result.issueCount;
+          counts.passedCount += result.passedCount;
+        }
+        const last: ReconciliationPayment = payments.at(-1)!;
+        cursor = { id: last.id, updatedAt: last.updatedAt };
+        pageCount += 1;
+        await this.prisma.reconciliationRun.update({
+          where: { id: run.id },
           data: {
-            localSnapshot: json(local),
-            matched: issueTypes.length === 0,
-            paymentId: payment.id,
-            provider: payment.provider,
-            providerSnapshot: json(remote),
-            runId: run.id,
+            checkpointPaymentId: cursor.id,
+            checkpointUpdatedAt: cursor.updatedAt,
+            pageCount,
           },
-          select: { id: true },
         });
-
-        if (issueTypes.length === 0) {
-          counts.passedCount += 1;
-        } else {
-          for (const issueType of issueTypes) {
-            const created = await this.recordIssue({
-              checkId: check.id,
-              issueType,
-              local,
-              paymentId: payment.id,
-              provider: payment.provider,
-              remote,
-              runId: run.id,
-            });
-            if (created) {
-              recordReconciliationIssue({
-                issue_type: issueType,
-                provider: payment.provider,
-              });
-            }
-            counts.issueCount += 1;
-          }
-        }
       }
 
       return this.complete(run.id, counts);
@@ -181,6 +152,102 @@ export class ReconciliationService {
       });
       throw error;
     }
+  }
+
+  private async reconcilePayment(
+    runId: string,
+    payment: ReconciliationPayment,
+  ): Promise<{
+    errorCount: number;
+    issueCount: number;
+    passedCount: number;
+  }> {
+    const local = localSnapshot(payment);
+    let providerPayment: ProviderPayment;
+    try {
+      const provider = this.providers.require(payment.provider);
+      if (!provider.isConfigured(PaymentProviderCapability.PAYMENT)) {
+        throw new Error(
+          `${payment.provider} is not configured for reconciliation lookups.`,
+        );
+      }
+      providerPayment = await withSpan(
+        'provider.payment.reconcile',
+        {
+          attributes: {
+            'payment.provider': payment.provider,
+            'payflow.payment.id': payment.id,
+          },
+          kind: SpanKind.CLIENT,
+        },
+        () => {
+          if (provider.getPaymentByReference) {
+            return provider.getPaymentByReference({
+              amount: payment.amount,
+              currency: payment.currency,
+              merchantReference: payment.id,
+              providerCheckoutSessionId: payment.providerCheckoutSessionId,
+              providerPaymentId: payment.providerPaymentId,
+            });
+          }
+          if (!payment.providerPaymentId) {
+            throw new Error(
+              `${payment.provider} has no queryable payment reference.`,
+            );
+          }
+          return provider.getPayment(payment.providerPaymentId);
+        },
+      );
+    } catch (error: unknown) {
+      await this.prisma.reconciliationCheck.create({
+        data: {
+          error: errorMessage(error).slice(0, 500),
+          localSnapshot: json(local),
+          matched: false,
+          paymentId: payment.id,
+          provider: payment.provider,
+          providerSnapshot: Prisma.JsonNull,
+          runId,
+        },
+      });
+      return { errorCount: 1, issueCount: 0, passedCount: 0 };
+    }
+
+    const remote = providerSnapshot(providerPayment);
+    const issueTypes = differences(local, remote);
+    const check = await this.prisma.reconciliationCheck.create({
+      data: {
+        localSnapshot: json(local),
+        matched: issueTypes.length === 0,
+        paymentId: payment.id,
+        provider: payment.provider,
+        providerSnapshot: json(remote),
+        runId,
+      },
+      select: { id: true },
+    });
+    for (const issueType of issueTypes) {
+      const created = await this.recordIssue({
+        checkId: check.id,
+        issueType,
+        local,
+        paymentId: payment.id,
+        provider: payment.provider,
+        remote,
+        runId,
+      });
+      if (created) {
+        recordReconciliationIssue({
+          issue_type: issueType,
+          provider: payment.provider,
+        });
+      }
+    }
+    return {
+      errorCount: 0,
+      issueCount: issueTypes.length,
+      passedCount: issueTypes.length === 0 ? 1 : 0,
+    };
   }
 
   private async complete(
@@ -215,7 +282,7 @@ export class ReconciliationService {
     issueType: ReconciliationIssueType;
     local: LocalPaymentSnapshot;
     paymentId: string;
-    provider: 'PAYPAL' | 'STRIPE';
+    provider: DatabasePaymentProvider;
     remote: ProviderPaymentSnapshot;
     runId: string;
   }): Promise<boolean> {
@@ -284,9 +351,6 @@ function localSnapshot(payment: {
   refunds: Array<{ amount: number }>;
   status: PaymentStatus;
 }): LocalPaymentSnapshot {
-  if (!payment.providerPaymentId) {
-    throw new Error('Reconciliation requires a provider payment identifier.');
-  }
   return {
     amount: payment.amount,
     currency: payment.currency,
@@ -298,6 +362,30 @@ function localSnapshot(payment: {
     ),
     status: providerStatus(payment.status),
   };
+}
+
+async function mapWithConcurrency<T, R>(
+  values: readonly T[],
+  concurrency: number,
+  mapper: (value: T) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(values.length);
+  let next = 0;
+  const workers = Array.from(
+    { length: Math.min(concurrency, values.length) },
+    async () => {
+      while (true) {
+        const index = next;
+        next += 1;
+        if (index >= values.length) {
+          return;
+        }
+        results[index] = await mapper(values[index]!);
+      }
+    },
+  );
+  await Promise.all(workers);
+  return results;
 }
 
 function providerSnapshot(payment: ProviderPayment): ProviderPaymentSnapshot {

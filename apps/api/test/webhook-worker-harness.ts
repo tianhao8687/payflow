@@ -7,6 +7,7 @@ import {
 } from '@payflow/payment-domain';
 import {
   createWebhookWorker,
+  PayFlowWebhookQueue,
   type WebhookWorker,
   unrecoverable,
 } from '@payflow/payment-queue';
@@ -18,9 +19,10 @@ export function startTestWebhookWorker(
   providers: PaymentProviderRegistry,
 ): WebhookWorker {
   const store = new WebhookEventStore(database.prisma);
-
-  return createWebhookWorker(
-    process.env.REDIS_URL ?? 'redis://localhost:6379',
+  const redisUrl = process.env.REDIS_URL ?? 'redis://localhost:6379';
+  const queue = new PayFlowWebhookQueue(redisUrl);
+  const worker = createWebhookWorker(
+    redisUrl,
     async (job) => {
       await store.beginAttempt(job.data.webhookEventId);
       try {
@@ -44,13 +46,44 @@ export function startTestWebhookWorker(
     },
     { concurrency: 4 },
   );
+  let dispatching = false;
+  const dispatch = async (): Promise<void> => {
+    if (dispatching) {
+      return;
+    }
+    dispatching = true;
+    try {
+      for (const event of await store.listUndispatched(50)) {
+        const attemptNumber = await store.beginDispatchAttempt(event.id);
+        if (attemptNumber === null) {
+          continue;
+        }
+        try {
+          const jobId = await queue.enqueue(event.id);
+          await store.markQueued(event.id, jobId);
+        } catch (error: unknown) {
+          await store.recordDispatchFailure(event.id, attemptNumber, error);
+        }
+      }
+    } finally {
+      dispatching = false;
+    }
+  };
+  void dispatch();
+  const timer = setInterval(() => void dispatch(), 25);
+  const closeWorker = worker.close.bind(worker);
+  worker.close = async (force?: boolean): Promise<void> => {
+    clearInterval(timer);
+    await Promise.all([closeWorker(force), queue.close()]);
+  };
+  return worker;
 }
 
 export async function waitForWebhookStatus(
   database: DatabaseService,
   providerEventId: string,
   expected: WebhookEventStatus,
-  provider: 'PAYPAL' | 'STRIPE' = 'STRIPE',
+  provider: 'ALIPAY' | 'PAYPAL' | 'STRIPE' = 'STRIPE',
   timeoutMs = 20_000,
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs;

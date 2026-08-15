@@ -47,6 +47,7 @@ export interface CreatePaymentInput {
   currency: string;
   idempotencyKey: string;
   lines: PaymentLine[];
+  merchantReference: string;
   orderId: string;
   paymentId: string;
   successUrl: string;
@@ -54,19 +55,20 @@ export interface CreatePaymentInput {
 
 export interface CreatePaymentResult {
   amount: number;
+  checkoutExpiresAt: Date;
+  checkoutUrl: string;
   currency: string;
-  expiresAt: Date;
-  providerCheckoutSessionId: string;
+  merchantReference: string;
+  providerCheckoutSessionId: string | null;
   providerPaymentId: string | null;
   providerRequestId: string | null;
-  redirectUrl: string;
   status: ProviderPaymentStatus;
 }
 
 export interface ProviderPayment {
   amount: number;
   currency: string;
-  providerPaymentId: string;
+  providerPaymentId: string | null;
   providerRequestId: string | null;
   refundedAmount: number | null;
   status: ProviderPaymentStatus;
@@ -80,11 +82,23 @@ export interface CapturePaymentInput {
 export type CapturePaymentResult = ProviderPayment;
 
 export interface CancelPaymentInput {
+  amount?: number;
+  currency?: string;
   idempotencyKey: string;
-  providerPaymentId: string;
+  merchantReference?: string;
+  providerCheckoutSessionId?: string | null;
+  providerPaymentId: string | null;
 }
 
 export type CancelPaymentResult = ProviderPayment;
+
+export interface GetPaymentInput {
+  amount: number;
+  currency: string;
+  merchantReference: string;
+  providerCheckoutSessionId: string | null;
+  providerPaymentId: string | null;
+}
 
 export interface RefundPaymentInput {
   amount: number;
@@ -108,10 +122,23 @@ export interface RefundPaymentResult {
   status: ProviderRefundStatus;
 }
 
+export interface GetRefundInput {
+  amount: number;
+  currency: string;
+  merchantReference: string;
+  providerPaymentId: string;
+  providerRefundId: string | null;
+  refundId: string;
+}
+
+export type GetRefundResult = RefundPaymentResult;
+
 export interface VerifyWebhookInput {
+  contentType?: string;
   headers?: Readonly<Record<string, string | undefined>>;
+  parsedForm?: Readonly<Record<string, string>>;
   rawBody: Uint8Array;
-  signature: string;
+  signature?: string;
 }
 
 export interface ProviderWebhookIgnoredAction {
@@ -128,8 +155,9 @@ export interface ProviderPaymentTransitionAction {
   amount: number | null;
   currency: string | null;
   kind: 'PAYMENT_TRANSITION';
-  orderId: string;
-  paymentId: string;
+  merchantReference: string | null;
+  orderId: string | null;
+  paymentId: string | null;
   providerCheckoutSessionId: string | null;
   providerPaymentId: string | null;
   targetStatus:
@@ -167,11 +195,19 @@ export type ProviderWebhookAction =
   | ProviderPaymentTransitionAction
   | ProviderRefundSyncAction;
 
+export interface ProviderWebhookPaymentAssertion {
+  amount: number;
+  currency: string;
+  merchantReference: string;
+}
+
 export interface VerifiedWebhookEvent {
   action: ProviderWebhookAction;
   eventType: string;
   occurredAt: Date;
   payload: unknown;
+  payloadHash?: string;
+  paymentAssertion?: ProviderWebhookPaymentAssertion;
   provider: string;
   providerEventId: string;
 }
@@ -185,11 +221,15 @@ export interface PaymentProvider {
 
   getPayment(providerPaymentId: string): Promise<ProviderPayment>;
 
+  getPaymentByReference?(input: GetPaymentInput): Promise<ProviderPayment>;
+
   capturePayment?(input: CapturePaymentInput): Promise<CapturePaymentResult>;
 
   cancelPayment?(input: CancelPaymentInput): Promise<CancelPaymentResult>;
 
   refundPayment(input: RefundPaymentInput): Promise<RefundPaymentResult>;
+
+  getRefund?(input: GetRefundInput): Promise<GetRefundResult>;
 
   verifyWebhook(input: VerifyWebhookInput): Promise<VerifiedWebhookEvent>;
 }

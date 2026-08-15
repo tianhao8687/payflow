@@ -38,6 +38,14 @@ const products = [
     stock: 12,
     active: true,
   },
+  {
+    sku: 'PF-CNY-011',
+    name: 'Alipay Sandbox Checkout Card',
+    priceAmount: 8_800,
+    currency: 'CNY',
+    stock: 50,
+    active: true,
+  },
 ] as const;
 
 async function seed(): Promise<void> {

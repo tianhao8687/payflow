@@ -7,6 +7,22 @@ const valid = {
 };
 
 describe('environment validation', () => {
+  it('keeps production Swagger disabled unless explicitly enabled', () => {
+    expect(
+      validateEnvironment({ ...valid, NODE_ENV: 'production' }).ENABLE_SWAGGER,
+    ).toBe(false);
+    expect(
+      validateEnvironment({
+        ...valid,
+        ENABLE_SWAGGER: 'true',
+        NODE_ENV: 'production',
+      }).ENABLE_SWAGGER,
+    ).toBe(true);
+    expect(() =>
+      validateEnvironment({ ...valid, ENABLE_SWAGGER: 'yes' }),
+    ).toThrow('ENABLE_SWAGGER must be true or false');
+  });
+
   it('allows absent or test Stripe credentials', () => {
     expect(validateEnvironment(valid).STRIPE_SECRET_KEY).toBe('');
     expect(validateEnvironment(valid).STRIPE_WEBHOOK_SECRET).toBe('');

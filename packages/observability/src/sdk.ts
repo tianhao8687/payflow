@@ -60,7 +60,7 @@ export function startObservability(
     resource: resourceFromAttributes({
       'deployment.environment.name': options.environment ?? 'development',
       'service.name': options.serviceName,
-      'service.version': options.serviceVersion ?? '0.10.0',
+      'service.version': options.serviceVersion ?? '0.11.0',
     }),
     spanProcessors: [new BatchSpanProcessor(exporter)],
   });
@@ -91,7 +91,7 @@ export function observabilityOptionsFromEnv(
       values.OTEL_EXPORTER_OTLP_ENDPOINT ??
       '',
     serviceName: values.OTEL_SERVICE_NAME || serviceName,
-    serviceVersion: values.OTEL_SERVICE_VERSION ?? '0.10.0',
+    serviceVersion: values.OTEL_SERVICE_VERSION ?? '0.11.0',
   };
 }
 

@@ -3,7 +3,7 @@
 ## Invariants
 
 1. Refund amounts are positive integers in the original payment currency.
-2. Only successful or partially refunded Stripe payments can be reserved.
+2. Only successful or partially refunded provider payments can be reserved.
 3. For one payment, `SUM(PENDING + SUCCEEDED refunds) <= payment.amount`.
 4. `(payment_id, refund_request_id)` and the derived provider idempotency key
    are unique.
@@ -19,7 +19,7 @@ sequenceDiagram
   participant A as ADMIN browser
   participant API as NestJS API
   participant DB as PostgreSQL
-  participant S as Stripe Test
+  participant P as Persisted Payment Provider
 
   A->>API: POST /admin/payments/:id/refunds
   API->>DB: Lock order/payment; find request UUID
@@ -29,11 +29,11 @@ sequenceDiagram
     API->>DB: Check cumulative reserved amount
     API->>DB: Insert PENDING Refund + REFUND_REQUESTED audit
   end
-  API->>S: Refunds.create + stable Idempotency-Key
-  S-->>API: pending / succeeded / failed snapshot
+  API->>P: refundPayment + stable provider reference
+  P-->>API: pending / succeeded / failed snapshot
   API->>DB: Lock and project Refund + Payment + Order + audit
   API-->>A: Local authoritative Refund
-  S->>API: Signed refund.created/updated/failed
+  P->>API: Verified refund event or active refund query
   API->>DB: Dedupe Event and project final state atomically
 ```
 
@@ -49,10 +49,13 @@ The browser generates a version-4 request UUID. PayFlow derives and persists:
 refund:create:{paymentId}:{refundRequestId}
 ```
 
-That exact value is sent as Stripe's `Idempotency-Key`. If the HTTP outcome is
-unknown, the local Refund remains `PENDING`; the console retains the request UUID
-and offers a same-key retry. A terminal local Refund is returned without another
-provider call.
+That exact value is sent as Stripe's `Idempotency-Key` or PayPal's request ID.
+For Alipay, the persisted Refund UUID is the stable `out_request_no` for both
+`alipay.trade.refund` and `alipay.trade.fastpay.refund.query`. If a mutation
+outcome is unknown, the local Refund remains `PENDING`; a repeated request first
+queries the same reference and only retries a confirmed-not-found refund. All
+provider mutation attempts are gated at least three seconds apart. A terminal
+local Refund is returned without another provider call.
 
 ## State projection
 

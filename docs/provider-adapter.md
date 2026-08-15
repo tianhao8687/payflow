@@ -2,9 +2,10 @@
 
 ## Boundary
 
-Stage 7 separated provider-neutral orchestration from Stripe transport. Stage 8
-adds PayPal Sandbox and runtime selection without changing the persisted Order,
-Payment, Refund, WebhookEvent, and AuditLog domain model.
+Stage 7 separated provider-neutral orchestration from Stripe transport, Stage 8
+added PayPal Sandbox, and Stage 11 adds Alipay PC web sandbox without changing
+provider ownership of the persisted Order, Payment, Refund, WebhookEvent, and
+AuditLog domain model.
 
 ```text
 NestJS Payments / Refunds / Webhooks + Worker
@@ -12,27 +13,28 @@ NestJS Payments / Refunds / Webhooks + Worker
                     v
         @payflow/payment-core
         PaymentProviderRegistry
-             /              \
-            v                v
- @payflow/payment-stripe  @payflow/payment-paypal
-       Stripe Test           PayPal Sandbox
+       /                |                 \
+      v                 v                  v
+ payment-stripe   payment-paypal    payment-alipay
+  Stripe Test     PayPal Sandbox    Alipay Sandbox
 ```
 
 `payment-core` has no dependency on NestJS, Prisma, the database package, or a
-provider SDK. Both provider adapters have no dependency on NestJS or PayFlow
+provider SDK. All provider adapters have no dependency on NestJS or PayFlow
 database types. The API composition module and standalone worker bootstrap are
 the only production composition roots allowed to construct adapters.
 
 ## Contract
 
-| Method            | Stripe Test mapping                        | PayPal Sandbox mapping                         |
-| ----------------- | ------------------------------------------ | ---------------------------------------------- |
-| `createPayment`   | Hosted Checkout Session                    | Orders v2 create + approval URL                |
-| `getPayment`      | `paymentIntents.retrieve`                  | Order/capture lookup                           |
-| `capturePayment?` | `paymentIntents.capture`                   | Capture approved Order                         |
-| `cancelPayment?`  | `paymentIntents.cancel`                    | Normalize an uncaptured Order as locally ended |
-| `refundPayment`   | Refund against a PaymentIntent             | Refund against a capture                       |
-| `verifyWebhook`   | Exact-byte signature verification + mapper | Official verification endpoint + mapper        |
+| Method                  | Stripe Test                         | PayPal Sandbox                                 | Alipay Sandbox                          |
+| ----------------------- | ----------------------------------- | ---------------------------------------------- | --------------------------------------- |
+| `createPayment`         | Hosted Checkout Session             | Orders v2 + approval URL                       | `alipay.trade.page.pay`                 |
+| `getPaymentByReference` | Session/PaymentIntent lookup        | Order/capture lookup                           | `alipay.trade.query` by `out_trade_no`  |
+| `capturePayment?`       | PaymentIntent capture               | Capture approved Order                         | not applicable                          |
+| `cancelPayment?`        | Expire Session/cancel PaymentIntent | fail closed when active Order cannot be closed | `alipay.trade.close` after unpaid query |
+| `refundPayment`         | Refund against PaymentIntent        | Refund against capture                         | `alipay.trade.refund`                   |
+| `getRefund?`            | optional                            | optional                                       | `alipay.trade.fastpay.refund.query`     |
+| `verifyWebhook`         | exact raw-byte signature            | official verification endpoint                 | official RSA2 form verification         |
 
 Stable idempotency keys remain business inputs:
 
@@ -42,7 +44,11 @@ refund:create:{paymentId}:{refundRequestId}
 payment:capture:{paymentId}
 ```
 
-The adapter must never generate a random replacement for either key.
+The adapter must never generate a random replacement for either key. The core
+also distinguishes `merchantReference`, nullable provider transaction ID,
+nullable checkout-session ID, checkout URL, and checkout expiry. Alipay maps the
+Payment UUID to `out_trade_no`; `trade_no` remains null until notification or
+query proves it.
 
 ## Normalized states
 
@@ -67,6 +73,13 @@ Unknown Refund states fail closed with an outcome-unknown provider error. The
 existing Order, Payment, and Refund state machines still decide whether a
 normalized event may change local state.
 
+Alipay maps `WAIT_BUYER_PAY` to pending and `TRADE_SUCCESS`/`TRADE_FINISHED` to
+success. `TRADE_CLOSED` is failed only for an unpaid local attempt; a late close
+cannot regress successful or refunded local state. CNY conversion is performed
+with decimal strings and integer arithmetic only. Provider network, rate-limit,
+and system errors use at most three exponential-backoff attempts with jitter;
+mutations reuse stable merchant/refund references on every attempt.
+
 ## Webhook envelope
 
 `verifyWebhook` returns `VerifiedWebhookEvent` containing:
@@ -79,9 +92,9 @@ normalized event may change local state.
 - `REFUND_SYNC` with local/provider identifiers and normalized refund state.
 
 The HTTP Webhooks repository imports no provider types. It persists the
-normalized action and enqueues a database event UUID. `payment-domain` later
-applies advisory locks, integrity checks, and explicit transitions in the
-worker.
+normalized action; the Worker-side Inbox Dispatcher later enqueues the database
+event UUID. `payment-domain` applies advisory locks, integrity checks, and
+explicit transitions in the worker.
 
 ## Error contract
 

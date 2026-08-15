@@ -1,6 +1,6 @@
 # PayFlow payment flow
 
-## Authoritative path through Stage 10
+## Authoritative path through Stage 11
 
 ```mermaid
 sequenceDiagram
@@ -8,7 +8,7 @@ sequenceDiagram
   participant API as NestJS API
   participant DB as PostgreSQL
   participant R as PaymentProviderRegistry
-  participant P as Stripe Test / PayPal Sandbox
+  participant P as Stripe Test / PayPal / Alipay Sandbox
   participant Q as Redis / BullMQ
   participant W as Webhook worker
   participant A as ADMIN browser
@@ -19,7 +19,7 @@ sequenceDiagram
   U->>API: POST /payments/checkout-session (orderId + provider)
   API->>DB: Lock order; reserve provider Payment + stable key
   API->>R: createPayment(provider, input)
-  R->>P: Hosted Checkout or PayPal Order
+  R->>P: Hosted Checkout, PayPal Order, or Alipay page pay
   P-->>R: Provider IDs + approval URL
   R-->>API: Normalized CreatePaymentResult
   API->>DB: Validate amount/currency; Payment=PENDING
@@ -29,10 +29,12 @@ sequenceDiagram
   API->>R: verifyWebhook(provider, exact request)
   R-->>API: VerifiedWebhookEvent + normalized action
   API->>DB: Persist/deduplicate RECEIVED event
-  API->>Q: Enqueue WebhookEvent UUID
-  Note over API,Q: Inject W3C trace context into job data
-  API->>DB: Record queue job ID/time
-  API-->>P: 200 accepted (business processing not awaited)
+  API-->>P: 2xx / exact Alipay success after Inbox commit
+  loop Inbox Dispatcher
+    W->>DB: Lease RECEIVED events with queued_at null
+    W->>Q: Enqueue WebhookEvent UUID
+    W->>DB: Record queue job ID/time
+  end
   Q->>W: Deliver job
   Note over Q,W: Extract parent context; continue the same trace
   W->>DB: Increment processing attempt and load action
@@ -67,9 +69,9 @@ sequenceDiagram
 ```
 
 The browser never submits a price. A provider redirect is not proof of payment,
-and a webhook `2xx` is only proof that the signed event was durably accepted and
-queued. Payment state becomes authoritative only after the worker commits the
-validated PostgreSQL projection.
+and a webhook `2xx`/Alipay `success` is only proof that the signed event was
+durably accepted in PostgreSQL. Payment state becomes authoritative only after
+the Dispatcher and worker complete the validated PostgreSQL projection.
 
 ## Idempotency and concurrency boundaries
 
@@ -79,9 +81,11 @@ validated PostgreSQL projection.
 3. Database: payment/refund keys and `provider_event_id` are unique; a partial
    unique index allows at most one successful/refunded Payment per Order.
 4. Provider checkout: `payment:create:{provider}:{orderId}:{attemptNo}` is sent
-   unchanged as Stripe's idempotency key or PayPal's `PayPal-Request-Id`.
-5. Provider refund: `refund:create:{paymentId}:{refundRequestId}` is sent
-   unchanged to the persisted provider.
+   unchanged as Stripe's idempotency key or PayPal's `PayPal-Request-Id`;
+   Alipay uses the stable Payment UUID as `out_trade_no`.
+5. Provider refund: `refund:create:{paymentId}:{refundRequestId}` remains the
+   local/provider idempotency key; Alipay uses the persisted Refund UUID as the
+   stable `out_request_no` for mutation and query.
 6. Queue: the WebhookEvent UUID is also the BullMQ job ID, so duplicate HTTP
    delivery converges on one retained job.
 7. PayPal capture: `payment:capture:{paymentId}` makes an approved-order capture
@@ -152,6 +156,15 @@ defense.
 | `PAYMENT.REFUND.PENDING`                               | Keep Refund pending                            |
 | `PAYMENT.REFUND.FAILED`                                | Mark Refund failed                             |
 | Any other verified event                               | Persist as `IGNORED`; no business mutation     |
+
+## Supported Alipay notifications
+
+| Alipay trade status               | Worker decision                                                                                |
+| --------------------------------- | ---------------------------------------------------------------------------------------------- |
+| `WAIT_BUYER_PAY`                  | Authenticated audit event; no money transition                                                 |
+| `TRADE_SUCCESS`, `TRADE_FINISHED` | Payment success and Order paid after exact reference/amount checks                             |
+| `TRADE_CLOSED`                    | Fail an unpaid attempt only when the state machine permits; never regress success/refund state |
+| Any unknown status                | Reject before Inbox persistence                                                                |
 
 ## Refund aggregate state
 

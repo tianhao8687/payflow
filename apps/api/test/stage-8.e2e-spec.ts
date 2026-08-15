@@ -56,15 +56,16 @@ class StageEightProvider implements PaymentProvider {
     });
     return {
       amount: input.amount,
-      currency: input.currency,
-      expiresAt: new Date(Date.now() + 21_600_000),
-      providerCheckoutSessionId: sessionId,
-      providerPaymentId: null,
-      providerRequestId: `${this.name.toLowerCase()}-create-request`,
-      redirectUrl:
+      checkoutExpiresAt: new Date(Date.now() + 21_600_000),
+      checkoutUrl:
         this.name === 'PAYPAL'
           ? `https://www.sandbox.paypal.com/checkoutnow?token=${sessionId}`
           : `https://checkout.stripe.test/c/${sessionId}`,
+      currency: input.currency,
+      merchantReference: input.merchantReference,
+      providerCheckoutSessionId: sessionId,
+      providerPaymentId: null,
+      providerRequestId: `${this.name.toLowerCase()}-create-request`,
       status: ProviderPaymentStatus.PENDING,
     };
   }

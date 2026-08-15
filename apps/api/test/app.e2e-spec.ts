@@ -70,12 +70,13 @@ class FakePaymentOperations {
 
     const result: CreatePaymentResult = {
       amount: input.amount,
+      checkoutExpiresAt: new Date(Date.now() + 86_400_000),
+      checkoutUrl: `https://checkout.stripe.test/c/payflow_${this.sessions.size + 1}`,
       currency: input.currency,
-      expiresAt: new Date(Date.now() + 86_400_000),
+      merchantReference: input.merchantReference,
       providerCheckoutSessionId: `cs_test_${this.sessions.size + 1}`,
       providerPaymentId: null,
       providerRequestId: `req_test_${this.sessions.size + 1}`,
-      redirectUrl: `https://checkout.stripe.test/c/payflow_${this.sessions.size + 1}`,
       status: ProviderPaymentStatus.PENDING,
     };
     this.sessions.set(input.idempotencyKey, result);
@@ -226,7 +227,7 @@ describe('PayFlow API acceptance through Stage 8 (e2e)', () => {
   it('exposes system and seeded product reads without authentication', async () => {
     await request(app.getHttpServer()).get('/').expect(200).expect({
       service: 'PayFlow API',
-      stage: 10,
+      stage: 11,
       health: '/health',
       docs: '/docs',
     });
@@ -235,9 +236,16 @@ describe('PayFlow API acceptance through Stage 8 (e2e)', () => {
       .get('/products')
       .expect(200);
     const listBody = list.body as unknown as ProductListResponseDto;
-    expect(listBody.count).toBe(4);
-    expect(listBody.items).toHaveLength(4);
-    const firstProduct = listBody.items[0];
+    expect(listBody.count).toBe(5);
+    expect(listBody.items).toHaveLength(5);
+    expect(listBody.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ currency: 'CNY', sku: 'PF-CNY-011' }),
+      ]),
+    );
+    const firstProduct = listBody.items.find(
+      (product) => product.currency === 'USD',
+    );
     expect(firstProduct).toBeDefined();
     expect(firstProduct?.active).toBe(true);
     expect(firstProduct?.currency).toBe('USD');
@@ -875,7 +883,7 @@ describe('PayFlow API acceptance through Stage 8 (e2e)', () => {
       refund: { id: first.refund.id, status: 'SUCCEEDED' },
       reused: true,
     });
-    expect(fakeStripeRefund.inputs).toHaveLength(2);
+    expect(fakeStripeRefund.inputs).toHaveLength(1);
 
     await expect(
       database.prisma.payment.findUniqueOrThrow({
@@ -1101,6 +1109,14 @@ describe('PayFlow API acceptance through Stage 8 (e2e)', () => {
         status: 'PROCESSED',
       }),
     ]);
+    const webhookItem = webhooksBody.items[0];
+    expect(webhookItem).toBeDefined();
+    expect(Number.isInteger(webhookItem?.dispatchAttempts)).toBe(true);
+    expect(typeof webhookItem?.nextDispatchAt).toBe('string');
+    expect(webhookItem).not.toHaveProperty('actionJson');
+    expect(webhookItem).not.toHaveProperty('eventFingerprint');
+    expect(webhookItem).not.toHaveProperty('payloadHash');
+    expect(webhookItem).not.toHaveProperty('payloadJson');
 
     const auditLogs = await request(app.getHttpServer())
       .get('/admin/audit-logs')

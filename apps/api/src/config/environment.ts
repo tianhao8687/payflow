@@ -1,8 +1,22 @@
 export type NodeEnvironment = 'development' | 'test' | 'production';
 
 export interface ApiEnvironment {
+  ALIPAY_ALLOW_PRODUCTION: boolean;
+  ALIPAY_ALIPAY_PUBLIC_CERT_CONTENT: string;
+  ALIPAY_ALIPAY_ROOT_CERT_CONTENT: string;
+  ALIPAY_APP_CERT_CONTENT: string;
+  ALIPAY_APP_ID: string;
+  ALIPAY_APP_PRIVATE_KEY: string;
+  ALIPAY_ENABLED: boolean;
+  ALIPAY_ENV: 'production' | 'sandbox';
+  ALIPAY_GATEWAY_URL: string;
+  ALIPAY_NOTIFY_URL: string;
+  ALIPAY_PUBLIC_KEY: string;
+  ALIPAY_RETURN_URL: string;
+  ALIPAY_SELLER_ID: string;
   APP_BASE_URL: string;
   DATABASE_URL: string;
+  ENABLE_SWAGGER: boolean;
   JWT_EXPIRES_IN_SECONDS: number;
   JWT_SECRET: string;
   NODE_ENV: NodeEnvironment;
@@ -42,6 +56,21 @@ export function validateEnvironment(
   const paypalClientSecret = readString(values, 'PAYPAL_CLIENT_SECRET', '');
   const paypalWebhookId = readString(values, 'PAYPAL_WEBHOOK_ID', '');
   const paypalEnvironment = readString(values, 'PAYPAL_ENV', 'sandbox');
+  const enableSwagger = readBoolean(values, 'ENABLE_SWAGGER', false);
+  const alipayEnabled = readBoolean(values, 'ALIPAY_ENABLED', false);
+  const alipayAllowProduction = readBoolean(
+    values,
+    'ALIPAY_ALLOW_PRODUCTION',
+    false,
+  );
+  const alipayEnvironment = readString(values, 'ALIPAY_ENV', 'sandbox');
+  const alipayGatewayUrl = readString(
+    values,
+    'ALIPAY_GATEWAY_URL',
+    alipayEnvironment === 'production'
+      ? 'https://openapi.alipay.com/gateway.do'
+      : 'https://openapi-sandbox.dl.alipaydev.com/gateway.do',
+  );
 
   if (!allowedNodeEnvironments.has(nodeEnvironment as NodeEnvironment)) {
     throw new Error(
@@ -91,6 +120,15 @@ export function validateEnvironment(
     throw new Error('PAYPAL_ENV must be sandbox; live mode is forbidden.');
   }
 
+  if (!new Set(['sandbox', 'production']).has(alipayEnvironment)) {
+    throw new Error('ALIPAY_ENV must be sandbox or production.');
+  }
+  if (alipayEnvironment === 'production' && !alipayAllowProduction) {
+    throw new Error(
+      'ALIPAY production mode requires ALIPAY_ALLOW_PRODUCTION=true.',
+    );
+  }
+
   try {
     const parsedRedisUrl = new URL(redisUrl);
     if (!new Set(['redis:', 'rediss:']).has(parsedRedisUrl.protocol)) {
@@ -108,8 +146,38 @@ export function validateEnvironment(
 
   return {
     ...values,
+    ALIPAY_ALLOW_PRODUCTION: alipayAllowProduction,
+    ALIPAY_ALIPAY_PUBLIC_CERT_CONTENT: readString(
+      values,
+      'ALIPAY_ALIPAY_PUBLIC_CERT_CONTENT',
+      '',
+    ),
+    ALIPAY_ALIPAY_ROOT_CERT_CONTENT: readString(
+      values,
+      'ALIPAY_ALIPAY_ROOT_CERT_CONTENT',
+      '',
+    ),
+    ALIPAY_APP_CERT_CONTENT: readString(values, 'ALIPAY_APP_CERT_CONTENT', ''),
+    ALIPAY_APP_ID: readString(values, 'ALIPAY_APP_ID', ''),
+    ALIPAY_APP_PRIVATE_KEY: readString(values, 'ALIPAY_APP_PRIVATE_KEY', ''),
+    ALIPAY_ENABLED: alipayEnabled,
+    ALIPAY_ENV: alipayEnvironment as 'production' | 'sandbox',
+    ALIPAY_GATEWAY_URL: alipayGatewayUrl,
+    ALIPAY_NOTIFY_URL: readString(
+      values,
+      'ALIPAY_NOTIFY_URL',
+      `http://localhost:${port}/webhooks/alipay`,
+    ),
+    ALIPAY_PUBLIC_KEY: readString(values, 'ALIPAY_PUBLIC_KEY', ''),
+    ALIPAY_RETURN_URL: readString(
+      values,
+      'ALIPAY_RETURN_URL',
+      `${appBaseUrl.replace(/\/$/, '')}/payments/{paymentId}/result?provider=alipay`,
+    ),
+    ALIPAY_SELLER_ID: readString(values, 'ALIPAY_SELLER_ID', ''),
     APP_BASE_URL: appBaseUrl,
     DATABASE_URL: databaseUrl,
+    ENABLE_SWAGGER: enableSwagger,
     JWT_EXPIRES_IN_SECONDS: jwtExpiresInSeconds,
     JWT_SECRET: jwtSecret,
     NODE_ENV: nodeEnvironment as NodeEnvironment,
@@ -122,6 +190,27 @@ export function validateEnvironment(
     STRIPE_SECRET_KEY: stripeSecretKey,
     STRIPE_WEBHOOK_SECRET: stripeWebhookSecret,
   };
+}
+
+function readBoolean(
+  values: Record<string, unknown>,
+  key: string,
+  fallback: boolean,
+): boolean {
+  const value = values[key];
+  if (value === undefined || value === null || value === '') {
+    return fallback;
+  }
+  if (typeof value === 'boolean') {
+    return value;
+  }
+  if (value === 'true') {
+    return true;
+  }
+  if (value === 'false') {
+    return false;
+  }
+  throw new Error(`${key} must be true or false.`);
 }
 
 function readString(

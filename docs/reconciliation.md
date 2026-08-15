@@ -53,8 +53,12 @@ balanced transaction from ever committing.
 ## Scheduled reconciliation
 
 The worker runs a bounded lookback scan over locally updated provider payments.
-For each payment with a provider payment ID it records a
-`reconciliation_checks` row containing immutable local and provider snapshots.
+Stage 11 exhausts the window with `(updated_at,id)` cursor pagination, records a
+checkpoint after every page, and performs provider lookups with bounded
+concurrency. Payments that do not yet have a provider transaction ID are
+queried through the persisted merchant/checkout reference rather than silently
+excluded. Each result records a `reconciliation_checks` row containing immutable
+local and provider snapshots.
 The comparison covers:
 
 - amount in integer minor units;
@@ -68,6 +72,9 @@ v2. That capture lookup does not provide a dependable cumulative refund amount,
 so the adapter returns `null` for that field and the service does not invent a
 value; amount, currency, and normalized status are still checked. Local refund
 totals always come from successful Refund rows.
+Alipay queries by `out_trade_no`, validates exact CNY amount/currency, and
+retains the returned `trade_no` only when present. Daily Alipay statements and
+bank-settlement three-way reconciliation remain a pre-production follow-up.
 
 A difference creates or refreshes one open issue per
 `(payment_id, issue_type)`. PostgreSQL advisory locks and a partial unique index
@@ -99,6 +106,9 @@ visibility is not an authorization boundary.
 | `RECONCILIATION_LOOKBACK_MS`     | `86400000` | Local payment update lookback     |
 | `STRIPE_RECONCILIATION_KEY`      | empty      | Test-mode read credential         |
 | `PAYPAL_CLIENT_ID` / `...SECRET` | empty      | PayPal Sandbox lookup credentials |
+| `ALIPAY_*`                       | empty      | Alipay Sandbox query credentials  |
+| `PAYMENT_RECOVERY_INTERVAL_MS`   | `15000`    | Expired checkout recovery scan    |
+| `INBOX_POLL_INTERVAL_MS`         | `500`      | Durable Inbox dispatch polling    |
 
 Use a restricted Stripe test key with PaymentIntent and Charge read access
 where available. `sk_test_...` is accepted only as a sandbox-development

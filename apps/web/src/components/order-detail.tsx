@@ -286,13 +286,14 @@ export function OrderDetail({ id }: { id: string }) {
                     Sandbox payment
                   </h2>
                   <p className="mt-2 max-w-xl text-sm leading-6 text-[#555b66]">
-                    Stripe and PayPal host the payment step. PayFlow only marks
-                    the order paid after a verified, queued provider event is
-                    handled by the worker.
+                    Stripe, PayPal, and Alipay host the payment step. PayFlow
+                    only marks the order paid after a verified provider event is
+                    durably received and handled by the worker.
                   </p>
                   <div className="mt-4">
                     <PaymentCheckoutControl
                       activeProvider={activePayment?.provider}
+                      currency={order.currency}
                       orderId={order.id}
                     />
                   </div>

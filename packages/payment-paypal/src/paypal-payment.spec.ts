@@ -109,6 +109,7 @@ describe('PayPalProvider payments and refunds', () => {
             unitAmount: 1_999,
           },
         ],
+        merchantReference: '11111111-1111-4111-8111-111111111111',
         orderId: '22222222-2222-4222-8222-222222222222',
         paymentId: '11111111-1111-4111-8111-111111111111',
         successUrl: 'http://localhost:3000/payments/payment-id/result',

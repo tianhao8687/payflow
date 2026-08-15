@@ -15,7 +15,8 @@ export class WebhookResponseDto {
   status!: WebhookEventStatus;
 
   @ApiProperty({
-    description: 'True when a BullMQ job exists for asynchronous processing',
+    description:
+      'True when the durable inbox accepted the event for asynchronous dispatch',
     example: true,
   })
   queued!: boolean;

@@ -12,11 +12,17 @@ import { runWithCorrelation } from './context';
 import { JsonLogger } from './logger';
 import {
   PAYFLOW_METRIC_NAMES,
+  recordInboxDispatchFailure,
+  recordInboxDispatchLag,
+  recordInboxDispatchRetry,
+  recordInboxOldestEventAge,
+  recordInboxReceived,
   recordPaymentFailure,
   recordPaymentSuccess,
   recordReconciliationIssue,
   recordRefundFailure,
   recordWebhookDuplicate,
+  recordWebhookEventConflict,
   recordWebhookProcessing,
 } from './metrics';
 import { captureTraceContext, SpanKind, withSpan } from './tracing';
@@ -124,9 +130,15 @@ describe('PayFlow observability contract', () => {
   });
 
   it('exports every required low-cardinality payment metric', async () => {
+    recordInboxReceived({ provider: 'ALIPAY' });
+    recordInboxDispatchLag(0.25, { provider: 'ALIPAY' });
+    recordInboxDispatchFailure({ provider: 'ALIPAY' });
+    recordInboxDispatchRetry(4.5, { provider: 'ALIPAY' });
+    recordInboxOldestEventAge(1.5);
     recordPaymentSuccess({ provider: 'STRIPE' });
     recordPaymentFailure({ provider: 'PAYPAL' });
     recordWebhookDuplicate({ provider: 'STRIPE' });
+    recordWebhookEventConflict({ provider: 'PAYPAL' });
     recordWebhookProcessing(0.125, {
       outcome: 'PROCESSED',
       provider: 'STRIPE',

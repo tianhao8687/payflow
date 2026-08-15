@@ -78,12 +78,13 @@ class FailureLabPaymentOperations {
     const sequence = this.sessions.size + 1;
     const result: CreatePaymentResult = {
       amount: input.amount,
+      checkoutExpiresAt: new Date(Date.now() + 86_400_000),
+      checkoutUrl: `https://checkout.stripe.test/c/failure_lab_${sequence}`,
       currency: input.currency,
-      expiresAt: new Date(Date.now() + 86_400_000),
+      merchantReference: input.merchantReference,
       providerCheckoutSessionId: `cs_test_failure_lab_${sequence}`,
       providerPaymentId: null,
       providerRequestId: `req_failure_lab_${sequence}`,
-      redirectUrl: `https://checkout.stripe.test/c/failure_lab_${sequence}`,
       status: ProviderPaymentStatus.PENDING,
     };
     this.sessions.set(input.idempotencyKey, result);

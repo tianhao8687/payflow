@@ -3,6 +3,7 @@ export type PaymentProviderOperation =
   | 'CAPTURE_PAYMENT'
   | 'CREATE_PAYMENT'
   | 'GET_PAYMENT'
+  | 'GET_REFUND'
   | 'REFUND_PAYMENT'
   | 'VERIFY_WEBHOOK';
 
