@@ -5,6 +5,7 @@ import {
   type CapturePaymentResult,
   type CreatePaymentInput,
   type CreatePaymentResult,
+  type GetPaymentInput,
   type PaymentProvider,
   PaymentProviderCapability,
   PaymentProviderError,
@@ -130,12 +131,13 @@ export class PayPalProvider implements PaymentProvider {
 
     return {
       amount: amount.amount,
+      checkoutExpiresAt: new Date(this.now() + 6 * 60 * 60 * 1000),
+      checkoutUrl: link,
       currency: amount.currency,
-      expiresAt: new Date(this.now() + 6 * 60 * 60 * 1000),
+      merchantReference: input.merchantReference,
       providerCheckoutSessionId: orderId,
       providerPaymentId: null,
       providerRequestId: response.requestId,
-      redirectUrl: link,
       status: ProviderPaymentStatus.PENDING,
     };
   }
@@ -165,6 +167,60 @@ export class PayPalProvider implements PaymentProvider {
       providerPaymentId: readString(response.body.id) ?? providerPaymentId,
       providerRequestId: response.requestId,
       refundedAmount: null,
+      status: mapPaymentStatus(status),
+    };
+  }
+
+  async getPaymentByReference(
+    input: GetPaymentInput,
+  ): Promise<ProviderPayment> {
+    if (input.providerPaymentId) {
+      return this.getPayment(input.providerPaymentId);
+    }
+    if (!input.providerCheckoutSessionId) {
+      throw new PaymentProviderError(
+        this.name,
+        'GET_PAYMENT',
+        'PAYPAL_PAYMENT_REFERENCE_MISSING',
+        'PayPal lookup requires an order or capture identifier.',
+      );
+    }
+    this.assertConfigured(PaymentProviderCapability.PAYMENT, 'GET_PAYMENT');
+    const response = await this.request<Record<string, unknown>>(
+      `/v2/checkout/orders/${encodeURIComponent(input.providerCheckoutSessionId)}`,
+      { method: 'GET', mutation: false, operation: 'GET_PAYMENT' },
+    );
+    const capture = readCapture(response.body);
+    const captureAmount = readMoney(capture?.amount);
+    const captureId = readString(capture?.id);
+    const captureStatus = readString(capture?.status);
+    if (capture && captureAmount && captureId && captureStatus) {
+      return {
+        amount: captureAmount.amount,
+        currency: captureAmount.currency,
+        providerPaymentId: captureId,
+        providerRequestId: response.requestId,
+        refundedAmount: null,
+        status: mapPaymentStatus(captureStatus),
+      };
+    }
+    const amount = readOrderAmount(response.body);
+    const status = readString(response.body.status);
+    if (!amount || !status) {
+      throw new PaymentProviderError(
+        this.name,
+        'GET_PAYMENT',
+        'PAYPAL_ORDER_INCOMPLETE',
+        'PayPal returned an incomplete order lookup.',
+        response.requestId,
+      );
+    }
+    return {
+      amount: amount.amount,
+      currency: amount.currency,
+      providerPaymentId: null,
+      providerRequestId: response.requestId,
+      refundedAmount: 0,
       status: mapPaymentStatus(status),
     };
   }
@@ -211,6 +267,48 @@ export class PayPalProvider implements PaymentProvider {
   }
 
   async cancelPayment(input: CancelPaymentInput): Promise<CancelPaymentResult> {
+    if (!input.providerPaymentId) {
+      if (
+        !input.providerCheckoutSessionId ||
+        input.amount === undefined ||
+        !input.currency ||
+        !input.merchantReference
+      ) {
+        throw new PaymentProviderError(
+          this.name,
+          'CANCEL_PAYMENT',
+          'PAYPAL_PAYMENT_REFERENCE_MISSING',
+          'PayPal cancellation requires an order or capture identifier.',
+        );
+      }
+      const payment = await this.getPaymentByReference({
+        amount: input.amount,
+        currency: input.currency,
+        merchantReference: input.merchantReference,
+        providerCheckoutSessionId: input.providerCheckoutSessionId,
+        providerPaymentId: null,
+      });
+      if (payment.status === ProviderPaymentStatus.SUCCEEDED) {
+        throw new PaymentProviderError(
+          this.name,
+          'CANCEL_PAYMENT',
+          'PAYPAL_CAPTURE_ALREADY_COMPLETED',
+          'A completed PayPal capture cannot be canceled.',
+        );
+      }
+      if (payment.status !== ProviderPaymentStatus.FAILED) {
+        throw new PaymentProviderError(
+          this.name,
+          'CANCEL_PAYMENT',
+          'PAYPAL_ORDER_CLOSE_UNSUPPORTED',
+          'PayPal does not expose a safe close operation for an active sandbox order.',
+          payment.providerRequestId,
+          true,
+          true,
+        );
+      }
+      return payment;
+    }
     const payment = await this.getPayment(input.providerPaymentId);
     if (payment.status === ProviderPaymentStatus.SUCCEEDED) {
       throw new PaymentProviderError(
@@ -221,7 +319,18 @@ export class PayPalProvider implements PaymentProvider {
       );
     }
 
-    return { ...payment, status: ProviderPaymentStatus.FAILED };
+    if (payment.status !== ProviderPaymentStatus.FAILED) {
+      throw new PaymentProviderError(
+        this.name,
+        'CANCEL_PAYMENT',
+        'PAYPAL_CAPTURE_CLOSE_UNSUPPORTED',
+        'An active PayPal capture cannot be safely marked closed locally.',
+        payment.providerRequestId,
+        true,
+        true,
+      );
+    }
+    return payment;
   }
 
   async refundPayment(input: RefundPaymentInput): Promise<RefundPaymentResult> {
@@ -288,9 +397,11 @@ export class PayPalProvider implements PaymentProvider {
     const transmissionTime = header(headers, 'paypal-transmission-time');
     const certUrl = header(headers, 'paypal-cert-url');
     const authAlgo = header(headers, 'paypal-auth-algo');
+    const signature =
+      header(headers, 'paypal-transmission-sig') ?? input.signature;
 
     if (
-      !input.signature ||
+      !signature ||
       !transmissionId ||
       !transmissionTime ||
       !certUrl ||
@@ -311,7 +422,7 @@ export class PayPalProvider implements PaymentProvider {
       `{"auth_algo":${JSON.stringify(authAlgo)},` +
       `"cert_url":${JSON.stringify(certUrl)},` +
       `"transmission_id":${JSON.stringify(transmissionId)},` +
-      `"transmission_sig":${JSON.stringify(input.signature)},` +
+      `"transmission_sig":${JSON.stringify(signature)},` +
       `"transmission_time":${JSON.stringify(transmissionTime)},` +
       `"webhook_id":${JSON.stringify(this.webhookId)},` +
       `"webhook_event":${rawEvent}}`;

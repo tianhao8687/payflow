@@ -35,6 +35,7 @@ describe('StripeProvider payment adapter', () => {
             unitAmount: 2400,
           },
         ],
+        merchantReference: 'payment-id',
         orderId: 'order-id',
         paymentId: 'payment-id',
         successUrl:

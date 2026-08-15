@@ -3,6 +3,11 @@
 - Status: Accepted for Stage 8 implementation
 - Date: 2026-08-13
 
+> Stage 11 amendment: ADR 0013 supersedes this record's synchronous enqueue
+> requirement and `2xx = durably queued` consequence. Provider acknowledgement
+> now follows the durable PostgreSQL Inbox commit; a separate leased Dispatcher
+> performs Redis enqueue.
+
 ## Context
 
 Stage 7 isolated Stripe behind `PaymentProvider`. Stage 8 requires PayPal

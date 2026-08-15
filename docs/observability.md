@@ -82,14 +82,20 @@ the application makes no collector connection; logs and metrics still work.
 API metrics listen on `127.0.0.1:9464` in local development; worker metrics use
 `127.0.0.1:9465`. Compose binds both host ports to loopback. Exact names:
 
-| Metric                       | Type      | Increment/observe rule           | Labels                   |
-| ---------------------------- | --------- | -------------------------------- | ------------------------ |
-| `payment_success_total`      | Counter   | Payment newly becomes successful | `provider`               |
-| `payment_failed_total`       | Counter   | Payment newly becomes failed     | `provider`               |
-| `webhook_duplicate_total`    | Counter   | Authenticated duplicate delivery | `provider`               |
-| `webhook_processing_seconds` | Histogram | Every worker attempt             | `provider`, `outcome`    |
-| `refund_failed_total`        | Counter   | Refund newly becomes failed      | `provider`               |
-| `reconciliation_issue_total` | Counter   | New open issue, not refresh      | `provider`, `issue_type` |
+| Metric                               | Type      | Increment/observe rule           | Labels                   |
+| ------------------------------------ | --------- | -------------------------------- | ------------------------ |
+| `payment_success_total`              | Counter   | Payment newly becomes successful | `provider`               |
+| `payment_failed_total`               | Counter   | Payment newly becomes failed     | `provider`               |
+| `webhook_duplicate_total`            | Counter   | Authenticated duplicate delivery | `provider`               |
+| `webhook_processing_seconds`         | Histogram | Every worker attempt             | `provider`, `outcome`    |
+| `refund_failed_total`                | Counter   | Refund newly becomes failed      | `provider`               |
+| `reconciliation_issue_total`         | Counter   | New open issue, not refresh      | `provider`, `issue_type` |
+| `inbox_received_total`               | Counter   | Verified durable Inbox receipt   | `provider`               |
+| `inbox_dispatch_lag_seconds`         | Histogram | Receipt-to-queue delay           | `provider`               |
+| `inbox_dispatch_failure_total`       | Counter   | Failed Dispatcher enqueue        | `provider`               |
+| `inbox_dispatch_retry_delay_seconds` | Histogram | Persisted dispatch retry delay   | `provider`               |
+| `inbox_oldest_event_age_seconds`     | Histogram | Oldest pending Inbox age         | none                     |
+| `webhook_event_conflict_total`       | Counter   | Verified ID/content collision    | `provider`               |
 
 IDs, request paths, emails, error messages, and provider event types are not
 metric labels; this prevents cardinality growth and accidental sensitive data.
@@ -101,6 +107,9 @@ Useful starter alerts for a real deployment:
 increase(payment_failed_total[15m]) > 5
 increase(refund_failed_total[15m]) > 0
 increase(reconciliation_issue_total[30m]) > 0
+increase(inbox_dispatch_failure_total[10m]) > 0
+increase(webhook_event_conflict_total[5m]) > 0
+histogram_quantile(0.95, sum by (le) (rate(inbox_dispatch_lag_seconds_bucket[10m]))) > 5
 histogram_quantile(0.95, sum by (le) (rate(webhook_processing_seconds_bucket[10m]))) > 2
 ```
 

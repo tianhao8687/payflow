@@ -25,6 +25,9 @@ export class PaymentResponseDto {
   @ApiPropertyOptional()
   providerPaymentId!: string | null;
 
+  @ApiProperty({ description: 'Stable PayFlow merchant payment reference.' })
+  merchantReference!: string;
+
   @ApiPropertyOptional()
   providerCheckoutSessionId!: string | null;
 

@@ -161,9 +161,14 @@ export class AdminService {
       ...pagination(query, result.total),
       items: result.items.map((event): AdminWebhookItemDto => ({
         deliveryCount: event.deliveryCount,
+        dispatchAttempts: event.dispatchAttempts,
+        dispatchError: event.dispatchError,
         eventType: event.eventType,
         id: event.id,
+        lastDispatchAttemptAt:
+          event.lastDispatchAttemptAt?.toISOString() ?? null,
         lastReceivedAt: event.lastReceivedAt.toISOString(),
+        nextDispatchAt: event.nextDispatchAt.toISOString(),
         processedAt: event.processedAt?.toISOString() ?? null,
         processingError: event.processingError,
         processingAttempts: event.processingAttempts,

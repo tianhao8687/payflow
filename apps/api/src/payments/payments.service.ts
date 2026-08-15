@@ -77,7 +77,7 @@ export class PaymentsService {
       });
     }
 
-    const reservation = await this.paymentsRepository.reservePayment(
+    let reservation = await this.paymentsRepository.reservePayment(
       request.orderId,
       userId,
       providerName,
@@ -132,8 +132,86 @@ export class PaymentsService {
       });
     }
 
+    if (
+      providerName === DatabasePaymentProvider.ALIPAY &&
+      reservation.payment.currency !== 'CNY'
+    ) {
+      await this.paymentsRepository.markCreatedPaymentFailed(
+        reservation.payment.id,
+      );
+      throw new UnprocessableEntityException({
+        code: 'ALIPAY_CURRENCY_UNSUPPORTED',
+        details: { currency: reservation.payment.currency },
+        message: 'Alipay checkout currently accepts CNY orders only.',
+      });
+    }
+
+    if (
+      reservation.payment.checkoutExpiresAt &&
+      reservation.payment.checkoutExpiresAt <= new Date() &&
+      new Set<PaymentStatus>([
+        PaymentStatus.PENDING,
+        PaymentStatus.PROCESSING,
+      ]).has(reservation.payment.status)
+    ) {
+      let recovery;
+      try {
+        recovery = await this.paymentsRepository.recoverExpiredPayment(
+          reservation.payment.id,
+          this.providerRegistry(),
+        );
+      } catch (error: unknown) {
+        const failure = this.toProviderFailure(error);
+        throw new BadGatewayException({
+          code: 'PAYMENT_RECOVERY_OUTCOME_UNKNOWN',
+          details: {
+            provider: paymentProvider.name,
+            providerCode: failure.code,
+          },
+          message:
+            'The expired provider payment could not be safely queried and closed. Retry later.',
+        });
+      }
+      if (recovery.status === PaymentStatus.SUCCEEDED) {
+        throw new ConflictException({
+          code: 'PAYMENT_ALREADY_SUCCEEDED',
+          details: { paymentId: recovery.paymentId },
+          message:
+            'The provider confirms this payment succeeded; no second checkout was created.',
+        });
+      }
+      if (recovery.status !== PaymentStatus.FAILED) {
+        throw new ConflictException({
+          code: 'PAYMENT_RECOVERY_PENDING',
+          details: { status: recovery.status },
+          message:
+            'The provider payment is still pending confirmation; no second checkout was created.',
+        });
+      }
+      const replacement = await this.paymentsRepository.reservePayment(
+        request.orderId,
+        userId,
+        providerName,
+      );
+      if (!replacement?.payment) {
+        throw new ConflictException({
+          code: 'PAYMENT_RESERVATION_FAILED',
+          message: 'A replacement payment could not be safely reserved.',
+        });
+      }
+      reservation = replacement;
+    }
+
+    const payment = reservation.payment;
+    if (!payment) {
+      throw new ConflictException({
+        code: 'PAYMENT_RESERVATION_FAILED',
+        message: 'A payment could not be reserved for this order.',
+      });
+    }
+
     const existing = this.existingCheckoutResponse(
-      reservation.payment,
+      payment,
       !reservation.created,
     );
 
@@ -141,16 +219,16 @@ export class PaymentsService {
       return existing;
     }
 
-    if (reservation.payment.status !== PaymentStatus.CREATED) {
+    if (payment.status !== PaymentStatus.CREATED) {
       throw new ConflictException({
         code: 'PAYMENT_NOT_REUSABLE',
-        details: { status: reservation.payment.status },
+        details: { status: payment.status },
         message: 'The current payment cannot create another Checkout Session.',
       });
     }
 
     const providerAttempt = await this.paymentsRepository.startProviderAttempt(
-      reservation.payment.id,
+      payment.id,
     );
 
     try {
@@ -160,34 +238,33 @@ export class PaymentsService {
           attributes: {
             'payment.provider': providerName,
             'payflow.order.id': reservation.order.id,
-            'payflow.payment.id': reservation.payment.id,
+            'payflow.payment.id': payment.id,
           },
           kind: SpanKind.CLIENT,
         },
         () =>
           paymentProvider.createPayment({
-            amount: reservation.payment!.amount,
+            amount: payment.amount,
             cancelUrl: `${this.appBaseUrl}/orders/${reservation.order.id}?checkout=cancelled`,
-            currency: reservation.payment!.currency,
-            idempotencyKey: reservation.payment!.idempotencyKey,
+            currency: payment.currency,
+            idempotencyKey: payment.idempotencyKey,
             lines: reservation.order.items.map((item) => ({
               name: item.nameSnapshot,
               quantity: item.quantity,
               sku: item.skuSnapshot,
               unitAmount: item.unitPriceAmount,
             })),
+            merchantReference: payment.id,
             orderId: reservation.order.id,
-            paymentId: reservation.payment!.id,
-            successUrl:
-              providerName === DatabasePaymentProvider.STRIPE
-                ? `${this.appBaseUrl}/payments/${reservation.payment!.id}/result?session_id={CHECKOUT_SESSION_ID}`
-                : `${this.appBaseUrl}/payments/${reservation.payment!.id}/result?provider=paypal`,
+            paymentId: payment.id,
+            successUrl: this.successUrl(providerName, payment.id),
           }),
       );
 
       if (
-        result.amount !== reservation.payment.amount ||
-        result.currency !== reservation.payment.currency
+        result.amount !== payment.amount ||
+        result.currency !== payment.currency ||
+        result.merchantReference !== payment.id
       ) {
         throw new PaymentProviderError(
           paymentProvider.name,
@@ -198,26 +275,30 @@ export class PaymentsService {
         );
       }
 
-      assertPaymentTransition(
-        reservation.payment.status,
-        PaymentStatus.PENDING,
-      );
-      const payment = await this.paymentsRepository.completeCheckoutSession(
-        reservation.payment.id,
-        providerAttempt.id,
-        {
-          checkoutExpiresAt: result.expiresAt,
-          checkoutUrl: result.redirectUrl,
-          providerCheckoutSessionId: result.providerCheckoutSessionId,
-          providerPaymentId: result.providerPaymentId,
-          providerRequestId: result.providerRequestId,
-        },
-      );
+      assertPaymentTransition(payment.status, PaymentStatus.PENDING);
+      const completedPayment =
+        await this.paymentsRepository.completeCheckoutSession(
+          payment.id,
+          providerAttempt.id,
+          {
+            checkoutExpiresAt: result.checkoutExpiresAt,
+            checkoutUrl: result.checkoutUrl,
+            providerCheckoutSessionId: result.providerCheckoutSessionId,
+            providerPaymentId: result.providerPaymentId,
+            providerRequestId: result.providerRequestId,
+          },
+        );
+      if (
+        !completedPayment.checkoutUrl ||
+        !completedPayment.checkoutExpiresAt
+      ) {
+        throw new Error('Completed checkout is missing its canonical URL.');
+      }
 
       return {
-        checkoutUrl: result.redirectUrl,
-        expiresAt: result.expiresAt.toISOString(),
-        payment: this.toResponse(payment),
+        checkoutUrl: completedPayment.checkoutUrl,
+        expiresAt: completedPayment.checkoutExpiresAt.toISOString(),
+        payment: this.toResponse(completedPayment),
         reused: !reservation.created,
       };
     } catch (error: unknown) {
@@ -267,7 +348,8 @@ export class PaymentsService {
     if (
       payment.status !== PaymentStatus.PENDING ||
       !payment.checkoutUrl ||
-      !payment.checkoutExpiresAt
+      !payment.checkoutExpiresAt ||
+      payment.checkoutExpiresAt <= new Date()
     ) {
       return null;
     }
@@ -310,6 +392,22 @@ export class PaymentsService {
     return this.providers.name === name ? this.providers : undefined;
   }
 
+  private providerRegistry(): PaymentProviderRegistry {
+    return this.providers instanceof PaymentProviderRegistry
+      ? this.providers
+      : new PaymentProviderRegistry([this.providers]);
+  }
+
+  private successUrl(
+    provider: DatabasePaymentProvider,
+    paymentId: string,
+  ): string {
+    if (provider === DatabasePaymentProvider.STRIPE) {
+      return `${this.appBaseUrl}/payments/${paymentId}/result?session_id={CHECKOUT_SESSION_ID}`;
+    }
+    return `${this.appBaseUrl}/payments/${paymentId}/result?provider=${provider.toLowerCase()}`;
+  }
+
   private toResponse(payment: PaymentWithCount): PaymentResponseDto {
     return {
       amount: payment.amount,
@@ -317,6 +415,7 @@ export class PaymentsService {
       createdAt: payment.createdAt.toISOString(),
       currency: payment.currency,
       id: payment.id,
+      merchantReference: payment.id,
       orderId: payment.orderId,
       provider: payment.provider,
       providerCallCount: payment._count.attempts,

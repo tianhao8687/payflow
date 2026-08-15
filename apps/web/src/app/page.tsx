@@ -9,7 +9,7 @@ export default function Home() {
         <div className="mx-auto grid max-w-[1536px] gap-10 px-5 py-14 sm:px-8 sm:py-20 lg:grid-cols-[minmax(0,1fr)_390px] lg:items-end lg:px-16 lg:py-24">
           <div className="max-w-[820px]">
             <p className="font-mono text-xs font-bold tracking-[0.15em] text-[#0757ff] uppercase sm:text-sm">
-              Stage 10 / Observable payments
+              Stage 11 / Alipay sandbox payments
             </p>
             <h1 className="mt-5 text-[clamp(2.8rem,7vw,6.6rem)] leading-[0.88] font-bold tracking-[-0.075em]">
               Tools for reliable payment work.

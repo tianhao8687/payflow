@@ -28,6 +28,7 @@ describe('mapStripeWebhookEvent', () => {
       amount: 2999,
       currency: 'USD',
       kind: 'PAYMENT_TRANSITION',
+      merchantReference: paymentId,
       orderId,
       paymentId,
       providerCheckoutSessionId: 'cs_test_payflow',

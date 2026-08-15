@@ -137,6 +137,60 @@ export class RefundsService {
       'payflow.refund.id': refund.id,
     });
 
+    if (!reservation.created && paymentProvider.getRefund) {
+      try {
+        const query = await withSpan(
+          'provider.refund.query',
+          {
+            attributes: {
+              'payment.provider': providerName,
+              'payflow.payment.id': refund.paymentId,
+              'payflow.refund.id': refund.id,
+            },
+            kind: SpanKind.CLIENT,
+          },
+          () =>
+            paymentProvider.getRefund!({
+              amount: refund.amount,
+              currency: refund.payment.currency,
+              merchantReference: refund.paymentId,
+              providerPaymentId: refund.payment.providerPaymentId!,
+              providerRefundId: refund.providerRefundId,
+              refundId: refund.id,
+            }),
+        );
+        const mutation = await this.refundsRepository.applyProviderResult(
+          refund.id,
+          actorId,
+          { ...query, status: this.localRefundStatus(query.status) },
+        );
+        return {
+          refund: this.toResponse(mutation.refund),
+          reused: true,
+        };
+      } catch (error: unknown) {
+        if (!this.refundNotFound(error)) {
+          const failure = this.providerFailure(error);
+          throw new BadGatewayException({
+            code: 'REFUND_QUERY_OUTCOME_UNKNOWN',
+            details: {
+              provider: paymentProvider.name,
+              providerCode: failure.code,
+            },
+            message:
+              'The pending provider refund could not be safely confirmed.',
+          });
+        }
+      }
+    }
+
+    if (!(await this.refundsRepository.beginProviderAttempt(refund.id))) {
+      return {
+        refund: this.toResponse(refund),
+        reused: true,
+      };
+    }
+
     try {
       const result = await withSpan(
         'provider.refund.create',
@@ -256,6 +310,13 @@ export class RefundsService {
     }
 
     return this.providers.name === name ? this.providers : undefined;
+  }
+
+  private refundNotFound(error: unknown): boolean {
+    return (
+      error instanceof PaymentProviderError &&
+      new Set(['ACQ.REFUND_NOT_EXIST', 'REFUND_NOT_EXIST']).has(error.code)
+    );
   }
 
   private localRefundStatus(status: ProviderRefundStatus): RefundStatus {

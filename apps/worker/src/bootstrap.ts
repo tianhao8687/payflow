@@ -1,5 +1,9 @@
 import { createPrismaClient } from '@payflow/database';
 import { JsonLogger } from '@payflow/observability';
+import {
+  AlipayProvider,
+  type AlipayProviderOptions,
+} from '@payflow/payment-alipay';
 import { PaymentProviderRegistry } from '@payflow/payment-core';
 import { PayPalProvider } from '@payflow/payment-paypal';
 import { StripeProvider } from '@payflow/payment-stripe';
@@ -17,7 +21,7 @@ export async function bootstrap(logger: JsonLogger): Promise<WorkerRuntime> {
   const providers = new PaymentProviderRegistry([
     new StripeProvider({
       appName: 'PayFlow Worker',
-      appVersion: '0.10.0',
+      appVersion: '0.11.0',
       secretKey: environment.stripeReconciliationKey,
       webhookSecret: '',
     }),
@@ -26,6 +30,7 @@ export async function bootstrap(logger: JsonLogger): Promise<WorkerRuntime> {
       clientSecret: environment.paypalClientSecret,
       webhookId: '',
     }),
+    new AlipayProvider(environment.alipay),
   ]);
 
   await prisma.$connect();
@@ -37,9 +42,11 @@ export async function bootstrap(logger: JsonLogger): Promise<WorkerRuntime> {
     redisUrl: environment.redisUrl,
   });
   const integrity = startIntegrityRuntime({
+    inboxPollIntervalMs: environment.inboxPollIntervalMs,
     logger,
     outboxConcurrency: environment.outboxConcurrency,
     outboxPollIntervalMs: environment.outboxPollIntervalMs,
+    paymentRecoveryIntervalMs: environment.paymentRecoveryIntervalMs,
     prisma,
     providers,
     reconciliationIntervalMs: environment.reconciliationIntervalMs,
@@ -82,12 +89,15 @@ export async function bootstrap(logger: JsonLogger): Promise<WorkerRuntime> {
 }
 
 interface WorkerEnvironment {
+  alipay: AlipayProviderOptions;
   concurrency: number;
   databaseUrl: string;
+  inboxPollIntervalMs: number;
   outboxConcurrency: number;
   outboxPollIntervalMs: number;
   paypalClientId: string;
   paypalClientSecret: string;
+  paymentRecoveryIntervalMs: number;
   reconciliationIntervalMs: number;
   reconciliationLookbackMs: number;
   redisUrl: string;
@@ -100,13 +110,28 @@ function readEnvironment(values: NodeJS.ProcessEnv): WorkerEnvironment {
   const concurrency = Number(values.WEBHOOK_WORKER_CONCURRENCY ?? 8);
   const outboxConcurrency = Number(values.OUTBOX_WORKER_CONCURRENCY ?? 4);
   const outboxPollIntervalMs = Number(values.OUTBOX_POLL_INTERVAL_MS ?? 500);
+  const inboxPollIntervalMs = Number(values.INBOX_POLL_INTERVAL_MS ?? 500);
   const reconciliationIntervalMs = Number(
     values.RECONCILIATION_INTERVAL_MS ?? 900_000,
+  );
+  const paymentRecoveryIntervalMs = Number(
+    values.PAYMENT_RECOVERY_INTERVAL_MS ?? 15_000,
   );
   const reconciliationLookbackMs = Number(
     values.RECONCILIATION_LOOKBACK_MS ?? 86_400_000,
   );
   const stripeReconciliationKey = values.STRIPE_RECONCILIATION_KEY ?? '';
+  const alipayEnabled = readBoolean(
+    values.ALIPAY_ENABLED,
+    'ALIPAY_ENABLED',
+    false,
+  );
+  const alipayAllowProduction = readBoolean(
+    values.ALIPAY_ALLOW_PRODUCTION,
+    'ALIPAY_ALLOW_PRODUCTION',
+    false,
+  );
+  const alipayEnvironment = values.ALIPAY_ENV ?? 'sandbox';
 
   if (!databaseUrl.startsWith('postgresql://')) {
     throw new Error('DATABASE_URL must be a PostgreSQL connection URL.');
@@ -124,8 +149,17 @@ function readEnvironment(values: NodeJS.ProcessEnv): WorkerEnvironment {
   ) {
     throw new Error('OUTBOX_WORKER_CONCURRENCY must be between 1 and 32.');
   }
+  if (
+    !Number.isInteger(paymentRecoveryIntervalMs) ||
+    paymentRecoveryIntervalMs < 5_000
+  ) {
+    throw new Error('PAYMENT_RECOVERY_INTERVAL_MS must be at least 5000.');
+  }
   if (!Number.isInteger(outboxPollIntervalMs) || outboxPollIntervalMs < 100) {
     throw new Error('OUTBOX_POLL_INTERVAL_MS must be at least 100.');
+  }
+  if (!Number.isInteger(inboxPollIntervalMs) || inboxPollIntervalMs < 100) {
+    throw new Error('INBOX_POLL_INTERVAL_MS must be at least 100.');
   }
   if (
     !Number.isInteger(reconciliationIntervalMs) ||
@@ -155,17 +189,61 @@ function readEnvironment(values: NodeJS.ProcessEnv): WorkerEnvironment {
       'Only PayPal sandbox mode is allowed in this implementation.',
     );
   }
+  if (!new Set(['sandbox', 'production']).has(alipayEnvironment)) {
+    throw new Error('ALIPAY_ENV must be sandbox or production.');
+  }
 
   return {
+    alipay: {
+      allowProduction: alipayAllowProduction,
+      alipayPublicCertContent: values.ALIPAY_ALIPAY_PUBLIC_CERT_CONTENT ?? '',
+      alipayPublicKey: values.ALIPAY_PUBLIC_KEY ?? '',
+      alipayRootCertContent: values.ALIPAY_ALIPAY_ROOT_CERT_CONTENT ?? '',
+      appCertContent: values.ALIPAY_APP_CERT_CONTENT ?? '',
+      appId: values.ALIPAY_APP_ID ?? '',
+      enabled: alipayEnabled,
+      environment: alipayEnvironment as 'production' | 'sandbox',
+      gatewayUrl:
+        values.ALIPAY_GATEWAY_URL ??
+        (alipayEnvironment === 'production'
+          ? 'https://openapi.alipay.com/gateway.do'
+          : 'https://openapi-sandbox.dl.alipaydev.com/gateway.do'),
+      notifyUrl:
+        values.ALIPAY_NOTIFY_URL ?? 'http://localhost:4000/webhooks/alipay',
+      privateKey: values.ALIPAY_APP_PRIVATE_KEY ?? '',
+      returnUrl:
+        values.ALIPAY_RETURN_URL ??
+        'http://localhost:3000/payments/{paymentId}/result?provider=alipay',
+      sellerId: values.ALIPAY_SELLER_ID ?? '',
+    },
     concurrency,
     databaseUrl,
+    inboxPollIntervalMs,
     outboxConcurrency,
     outboxPollIntervalMs,
     paypalClientId: values.PAYPAL_CLIENT_ID ?? '',
     paypalClientSecret: values.PAYPAL_CLIENT_SECRET ?? '',
+    paymentRecoveryIntervalMs,
     reconciliationIntervalMs,
     reconciliationLookbackMs,
     redisUrl,
     stripeReconciliationKey,
   };
+}
+
+function readBoolean(
+  value: string | undefined,
+  name: string,
+  fallback: boolean,
+): boolean {
+  if (value === undefined || value === '') {
+    return fallback;
+  }
+  if (value === 'true') {
+    return true;
+  }
+  if (value === 'false') {
+    return false;
+  }
+  throw new Error(`${name} must be true or false.`);
 }

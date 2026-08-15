@@ -5,6 +5,7 @@ import {
   type CapturePaymentResult,
   type CreatePaymentInput,
   type CreatePaymentResult,
+  type GetPaymentInput,
   type PaymentProvider,
   PaymentProviderCapability,
   PaymentProviderError,
@@ -112,12 +113,13 @@ export class StripeProvider implements PaymentProvider {
 
       return {
         amount: session.amount_total,
+        checkoutExpiresAt: new Date(session.expires_at * 1000),
+        checkoutUrl: session.url,
         currency: session.currency.toUpperCase(),
-        expiresAt: new Date(session.expires_at * 1000),
+        merchantReference: input.merchantReference,
         providerCheckoutSessionId: session.id,
         providerPaymentId: expandableId(session.payment_intent),
         providerRequestId: session.lastResponse?.requestId ?? null,
-        redirectUrl: session.url,
         status: ProviderPaymentStatus.PENDING,
       };
     } catch (error: unknown) {
@@ -151,6 +153,64 @@ export class StripeProvider implements PaymentProvider {
     }
   }
 
+  async getPaymentByReference(
+    input: GetPaymentInput,
+  ): Promise<ProviderPayment> {
+    if (input.providerPaymentId) {
+      return this.getPayment(input.providerPaymentId);
+    }
+    if (!input.providerCheckoutSessionId) {
+      throw new PaymentProviderError(
+        this.name,
+        'GET_PAYMENT',
+        'STRIPE_PAYMENT_REFERENCE_MISSING',
+        'Stripe lookup requires a Checkout Session or PaymentIntent identifier.',
+      );
+    }
+    this.assertConfigured(PaymentProviderCapability.PAYMENT, 'GET_PAYMENT');
+    try {
+      const session = await this.stripe.checkout.sessions.retrieve(
+        input.providerCheckoutSessionId,
+        { expand: ['payment_intent'] },
+      );
+      if (session.amount_total === null || !session.currency) {
+        throw new PaymentProviderError(
+          this.name,
+          'GET_PAYMENT',
+          'STRIPE_SESSION_INCOMPLETE',
+          'Stripe returned an incomplete Checkout Session.',
+          session.lastResponse?.requestId ?? null,
+        );
+      }
+      const paymentIntent =
+        typeof session.payment_intent === 'object'
+          ? session.payment_intent
+          : null;
+      return {
+        amount: session.amount_total,
+        currency: session.currency.toUpperCase(),
+        providerPaymentId: expandableId(session.payment_intent),
+        providerRequestId: session.lastResponse?.requestId ?? null,
+        refundedAmount: paymentIntent
+          ? stripeRefundedAmount(paymentIntent.latest_charge)
+          : 0,
+        status: paymentIntent
+          ? this.mapPaymentStatus(paymentIntent.status)
+          : session.status === 'expired'
+            ? ProviderPaymentStatus.FAILED
+            : ProviderPaymentStatus.PENDING,
+      };
+    } catch (error: unknown) {
+      this.throwProviderError(
+        error,
+        'GET_PAYMENT',
+        'STRIPE_SESSION_LOOKUP_FAILED',
+        'Stripe Checkout Session lookup failed.',
+        false,
+      );
+    }
+  }
+
   async capturePayment(
     input: CapturePaymentInput,
   ): Promise<CapturePaymentResult> {
@@ -176,6 +236,42 @@ export class StripeProvider implements PaymentProvider {
 
   async cancelPayment(input: CancelPaymentInput): Promise<CancelPaymentResult> {
     this.assertConfigured(PaymentProviderCapability.PAYMENT, 'CANCEL_PAYMENT');
+
+    if (!input.providerPaymentId) {
+      if (
+        !input.providerCheckoutSessionId ||
+        input.amount === undefined ||
+        !input.currency
+      ) {
+        throw new PaymentProviderError(
+          this.name,
+          'CANCEL_PAYMENT',
+          'STRIPE_PAYMENT_REFERENCE_MISSING',
+          'Stripe cancellation requires a Checkout Session or PaymentIntent identifier.',
+        );
+      }
+      try {
+        const session = await this.stripe.checkout.sessions.expire(
+          input.providerCheckoutSessionId,
+        );
+        return {
+          amount: session.amount_total ?? input.amount,
+          currency: session.currency?.toUpperCase() ?? input.currency,
+          providerPaymentId: expandableId(session.payment_intent),
+          providerRequestId: session.lastResponse?.requestId ?? null,
+          refundedAmount: 0,
+          status: ProviderPaymentStatus.FAILED,
+        };
+      } catch (error: unknown) {
+        this.throwProviderError(
+          error,
+          'CANCEL_PAYMENT',
+          'STRIPE_SESSION_EXPIRE_FAILED',
+          'Stripe Checkout Session expiration failed.',
+          true,
+        );
+      }
+    }
 
     try {
       const paymentIntent = await this.stripe.paymentIntents.cancel(
@@ -245,13 +341,24 @@ export class StripeProvider implements PaymentProvider {
     input: VerifyWebhookInput,
   ): Promise<VerifiedWebhookEvent> {
     this.assertConfigured(PaymentProviderCapability.WEBHOOK, 'VERIFY_WEBHOOK');
+    const signature =
+      input.headers?.['stripe-signature'] ?? input.signature ?? '';
+
+    if (!signature) {
+      throw new PaymentProviderError(
+        this.name,
+        'VERIFY_WEBHOOK',
+        'WEBHOOK_SIGNATURE_INVALID',
+        'Stripe webhook signature verification failed.',
+      );
+    }
 
     let event: Stripe.Event;
 
     try {
       event = await this.stripe.webhooks.constructEventAsync(
         Buffer.from(input.rawBody),
-        input.signature,
+        signature,
         this.webhookSecret,
       );
     } catch (error: unknown) {

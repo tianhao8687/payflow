@@ -1,5 +1,6 @@
 import {
   Controller,
+  Header,
   Headers,
   HttpCode,
   HttpStatus,
@@ -81,4 +82,40 @@ export class WebhooksController {
       'paypal-transmission-time': transmissionTime,
     });
   }
+
+  @Post('alipay')
+  @HttpCode(HttpStatus.OK)
+  @Header('Content-Type', 'text/plain; charset=utf-8')
+  @ApiOperation({
+    summary: 'Verify and durably persist an Alipay form notification',
+  })
+  @ApiBody({
+    description: 'Alipay application/x-www-form-urlencoded notification',
+    schema: { type: 'string' },
+  })
+  @ApiOkResponse({ description: 'Exact plain-text Alipay acknowledgement' })
+  async handleAlipay(
+    @Req() request: RawBodyRequest<Request>,
+    @Headers('content-type') contentType: string | undefined,
+  ): Promise<string> {
+    await this.webhooksService.handleAlipay(
+      request.rawBody,
+      contentType,
+      parsedStringForm(request.body),
+    );
+    return 'success';
+  }
+}
+
+function parsedStringForm(
+  value: unknown,
+): Readonly<Record<string, string>> | undefined {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return undefined;
+  }
+  const entries = Object.entries(value);
+  if (entries.some(([, item]) => typeof item !== 'string')) {
+    return undefined;
+  }
+  return Object.fromEntries(entries);
 }

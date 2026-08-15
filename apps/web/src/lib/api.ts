@@ -40,7 +40,7 @@ export type OrderStatus =
   | 'PARTIALLY_REFUNDED'
   | 'REFUNDED';
 
-export type PaymentProvider = 'PAYPAL' | 'STRIPE';
+export type PaymentProvider = 'ALIPAY' | 'PAYPAL' | 'STRIPE';
 export type PaymentStatus =
   | 'CREATED'
   | 'PENDING'
@@ -104,6 +104,7 @@ export interface PaymentRecord {
   status: PaymentStatus;
   amount: number;
   currency: string;
+  merchantReference: string;
   providerPaymentId: string | null;
   providerCheckoutSessionId: string | null;
   attemptNo: number;

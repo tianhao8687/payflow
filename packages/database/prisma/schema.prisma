@@ -25,6 +25,7 @@ enum OrderStatus {
 enum PaymentProvider {
   STRIPE
   PAYPAL
+  ALIPAY
 }
 
 enum PaymentStatus {
@@ -211,38 +212,47 @@ model WebhookEvent {
   status                  WebhookEventStatus @default(RECEIVED)
   deliveryCount           Int                @default(1) @map("delivery_count")
   processingAttempts      Int                @default(0) @map("processing_attempts")
+  dispatchAttempts        Int                @default(0) @map("dispatch_attempts")
+  dispatchError           String?            @map("dispatch_error") @db.VarChar(500)
+  dispatchLeaseUntil      DateTime?          @map("dispatch_lease_until") @db.Timestamptz(3)
+  nextDispatchAt          DateTime           @default(now()) @map("next_dispatch_at") @db.Timestamptz(3)
   processingError         String?            @map("processing_error") @db.VarChar(500)
   queueJobId              String?            @map("queue_job_id") @db.VarChar(255)
   receivedAt              DateTime           @default(now()) @map("received_at") @db.Timestamptz(3)
   lastReceivedAt          DateTime           @default(now()) @map("last_received_at") @db.Timestamptz(3)
   providerOccurredAt      DateTime?          @map("provider_occurred_at") @db.Timestamptz(3)
+  payloadHash             String?            @map("payload_hash") @db.VarChar(64)
+  eventFingerprint        String?            @map("event_fingerprint") @db.VarChar(64)
   queuedAt                DateTime?          @map("queued_at") @db.Timestamptz(3)
+  lastDispatchAttemptAt   DateTime?          @map("last_dispatch_attempt_at") @db.Timestamptz(3)
   lastProcessingStartedAt DateTime?          @map("last_processing_started_at") @db.Timestamptz(3)
   processedAt             DateTime?          @map("processed_at") @db.Timestamptz(3)
 
   @@unique([provider, providerEventId])
   @@index([provider, receivedAt])
   @@index([status, receivedAt])
+  @@index([status, queuedAt, nextDispatchAt, receivedAt, id], map: "webhook_events_dispatch_due_idx")
   @@index([eventType, receivedAt])
   @@index([queueJobId])
   @@map("webhook_events")
 }
 
 model Refund {
-  id                String       @id @default(uuid()) @db.Uuid
-  paymentId         String       @map("payment_id") @db.Uuid
-  refundRequestId   String       @map("refund_request_id") @db.Uuid
-  providerRefundId  String?      @unique @map("provider_refund_id") @db.VarChar(255)
-  amount            Int
-  status            RefundStatus @default(PENDING)
-  reason            String       @db.VarChar(500)
-  idempotencyKey    String       @unique @map("idempotency_key") @db.VarChar(255)
-  providerRequestId String?      @map("provider_request_id") @db.VarChar(255)
-  failureCode       String?      @map("failure_code") @db.VarChar(100)
-  failureMessage    String?      @map("failure_message") @db.VarChar(500)
-  createdAt         DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt         DateTime     @updatedAt @map("updated_at") @db.Timestamptz(3)
-  payment           Payment      @relation(fields: [paymentId], references: [id], onDelete: Restrict)
+  id                    String       @id @default(uuid()) @db.Uuid
+  paymentId             String       @map("payment_id") @db.Uuid
+  refundRequestId       String       @map("refund_request_id") @db.Uuid
+  providerRefundId      String?      @unique @map("provider_refund_id") @db.VarChar(255)
+  amount                Int
+  status                RefundStatus @default(PENDING)
+  reason                String       @db.VarChar(500)
+  idempotencyKey        String       @unique @map("idempotency_key") @db.VarChar(255)
+  providerRequestId     String?      @map("provider_request_id") @db.VarChar(255)
+  lastProviderAttemptAt DateTime?    @map("last_provider_attempt_at") @db.Timestamptz(3)
+  failureCode           String?      @map("failure_code") @db.VarChar(100)
+  failureMessage        String?      @map("failure_message") @db.VarChar(500)
+  createdAt             DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt             DateTime     @updatedAt @map("updated_at") @db.Timestamptz(3)
+  payment               Payment      @relation(fields: [paymentId], references: [id], onDelete: Restrict)
 
   @@unique([paymentId, refundRequestId])
   @@index([paymentId, createdAt])
@@ -339,18 +349,21 @@ model LedgerEntry {
 }
 
 model ReconciliationRun {
-  id           String                  @id @default(uuid()) @db.Uuid
-  status       ReconciliationRunStatus @default(RUNNING)
-  windowStart  DateTime                @map("window_start") @db.Timestamptz(3)
-  windowEnd    DateTime                @map("window_end") @db.Timestamptz(3)
-  checkedCount Int                     @default(0) @map("checked_count")
-  passedCount  Int                     @default(0) @map("passed_count")
-  issueCount   Int                     @default(0) @map("issue_count")
-  errorCount   Int                     @default(0) @map("error_count")
-  startedAt    DateTime                @default(now()) @map("started_at") @db.Timestamptz(3)
-  completedAt  DateTime?               @map("completed_at") @db.Timestamptz(3)
-  checks       ReconciliationCheck[]
-  issues       ReconciliationIssue[]
+  id                  String                  @id @default(uuid()) @db.Uuid
+  status              ReconciliationRunStatus @default(RUNNING)
+  windowStart         DateTime                @map("window_start") @db.Timestamptz(3)
+  windowEnd           DateTime                @map("window_end") @db.Timestamptz(3)
+  checkedCount        Int                     @default(0) @map("checked_count")
+  passedCount         Int                     @default(0) @map("passed_count")
+  issueCount          Int                     @default(0) @map("issue_count")
+  errorCount          Int                     @default(0) @map("error_count")
+  pageCount           Int                     @default(0) @map("page_count")
+  checkpointUpdatedAt DateTime?               @map("checkpoint_updated_at") @db.Timestamptz(3)
+  checkpointPaymentId String?                 @map("checkpoint_payment_id") @db.Uuid
+  startedAt           DateTime                @default(now()) @map("started_at") @db.Timestamptz(3)
+  completedAt         DateTime?               @map("completed_at") @db.Timestamptz(3)
+  checks              ReconciliationCheck[]
+  issues              ReconciliationIssue[]
 
   @@index([startedAt])
   @@index([status, startedAt])

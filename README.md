@@ -4,11 +4,12 @@ PayFlow is a full-stack payment-system portfolio project implemented one
 acceptance-gated stage at a time from the accompanying Codex implementation
 specification.
 
-> Current delivery: **Stage 10 — Observability + Portfolio (accepted)**.
-> The complete sandbox payment flow now emits redacted JSON logs, correlated
-> OpenTelemetry traces, six low-cardinality payment metrics, and PostgreSQL +
-> Redis readiness. All local acceptance gates and the committed GitHub Actions
-> workflow pass.
+> Current delivery: **Stage 12 — Webhook Retry + Identity Hardening**.
+> Stripe Test, PayPal Sandbox, and CNY-only Alipay Sandbox share provider-neutral
+> payment/refund/query contracts. Verified events are acknowledged after a
+> PostgreSQL Inbox commit, fingerprint-bound to their event IDs, and dispatched
+> to Redis with persisted exponential backoff. This remains a sandbox boundary;
+> real-funds controls are listed in the Stage 11 and Stage 12 records.
 
 ## Current architecture
 
@@ -24,12 +25,16 @@ flowchart LR
   Webhooks -->|verifyWebhook| Registry
   Registry --> StripeAdapter[StripeProvider]
   Registry --> PayPalAdapter[PayPalProvider]
+  Registry --> AlipayAdapter[AlipayProvider]
   StripeAdapter -->|hosted Checkout + stable keys| Stripe[Stripe Test]
   PayPalAdapter -->|Orders v2 + stable keys| PayPal[PayPal Sandbox]
+  AlipayAdapter -->|page pay/query/close/refund| Alipay[Alipay Sandbox]
   Stripe -->|signed raw Event| Webhooks[NestJS webhook module]
   PayPal -->|raw Event + verification headers| Webhooks
+  Alipay -->|signed form notification| Webhooks
   Webhooks -->|verify + durable receive| DB
-  Webhooks -->|WebhookEvent UUID| Queue[(Redis / BullMQ)]
+  Dispatcher[Worker Inbox Dispatcher] -->|lease RECEIVED rows| DB
+  Dispatcher -->|WebhookEvent UUID| Queue[(Redis / BullMQ)]
   Queue --> Worker[Webhook worker]
   Worker -->|locked state projection + outbox| DB
   Worker -->|poll + publish money events| Queue
@@ -67,6 +72,8 @@ states/actions/errors, and a registry for provider selection.
 `@payflow/payment-stripe` maps it to current hosted Checkout, PaymentIntents,
 Refunds, and signed Events. `@payflow/payment-paypal` maps the same contract to
 Sandbox Orders v2, capture/refund APIs, OAuth, and official webhook verification.
+`@payflow/payment-alipay` maps CNY PC web page pay, transaction query/close,
+refund/query, and official RSA2 form notification verification.
 
 `@payflow/payment-domain` owns shared state transitions and queued event
 projection. `@payflow/payment-queue` owns BullMQ policy; `apps/worker` is the
@@ -137,8 +144,8 @@ Services and interfaces:
 - Admin operations: <http://localhost:3000/admin>
 - API information: <http://localhost:4000>
 - API health: <http://localhost:4000/health>
-- OpenAPI UI: <http://localhost:4000/docs>
-- OpenAPI JSON: <http://localhost:4000/openapi.json>
+- OpenAPI UI (non-production or `ENABLE_SWAGGER=true`): <http://localhost:4000/docs>
+- OpenAPI JSON (same opt-in): <http://localhost:4000/openapi.json>
 - Redis/BullMQ: `localhost:6379` (transport only; no public HTTP interface)
 - API Prometheus metrics: <http://localhost:9464/metrics> (loopback only)
 - Worker Prometheus metrics: <http://localhost:9465/metrics> (loopback only)
@@ -162,10 +169,11 @@ docker compose down
 | GET    | `/orders`                                  | JWT    | List current user's orders                 |
 | GET    | `/orders/:id`                              | JWT    | Read owned order, payments, and refunds    |
 | POST   | `/orders/:id/cancel`                       | JWT    | Cancel an owned pending order              |
-| POST   | `/payments/checkout-session`               | JWT    | Create/reuse Stripe or PayPal checkout     |
+| POST   | `/payments/checkout-session`               | JWT    | Create/reuse Stripe/PayPal/Alipay checkout |
 | GET    | `/payments/:id`                            | JWT    | Read an owned local payment and refunds    |
-| POST   | `/webhooks/stripe`                         | Public | Verify, persist, and queue a Stripe Event  |
-| POST   | `/webhooks/paypal`                         | Public | Verify, persist, and queue a PayPal Event  |
+| POST   | `/webhooks/stripe`                         | Public | Verify and durably receive a Stripe Event  |
+| POST   | `/webhooks/paypal`                         | Public | Verify and durably receive a PayPal Event  |
+| POST   | `/webhooks/alipay`                         | Public | Verify form, persist, return exact success |
 | GET    | `/admin/profile`                           | ADMIN  | Verify the administrator boundary          |
 | GET    | `/admin/dashboard`                         | ADMIN  | Read payment-system operational counters   |
 | GET    | `/admin/orders[/:id]`                      | ADMIN  | Paginate/search and inspect orders         |
@@ -212,6 +220,13 @@ PayPal is disabled until `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET`, and the
 Sandbox endpoint's `PAYPAL_WEBHOOK_ID` are configured. `PAYPAL_ENV` is locked to
 `sandbox`; live PayPal operation is rejected.
 
+Alipay is disabled until `ALIPAY_ENABLED=true` and sandbox app/seller IDs,
+private key, Alipay public key (or complete certificate set), gateway, notify,
+and return URLs are supplied from ignored secrets. Only CNY orders are accepted;
+the seed includes `PF-CNY-011`. Production additionally requires explicit
+`ALIPAY_ALLOW_PRODUCTION=true`, HTTPS callbacks, the exact production gateway,
+and certificate mode. Do not enable it for real funds from this stage alone.
+
 Scheduled Stripe reconciliation uses the worker-only
 `STRIPE_RECONCILIATION_KEY`. Prefer a restricted test key with PaymentIntent and
 Charge read access; a normal test secret key is accepted only as a local sandbox
@@ -249,11 +264,11 @@ pnpm secrets:scan
 
 ## Quality gates
 
-Run formatting, tracked-secret scanning, static checks, unit tests, and
-production builds:
+Run formatting, tracked-secret scanning, the production dependency audit,
+static checks, unit tests, and production builds:
 
 ```powershell
-pnpm run ci
+pnpm run verify
 ```
 
 Run the database-backed acceptance suite after migration and seed:
@@ -277,6 +292,19 @@ Run only the Stage 10 observability acceptance:
 
 ```powershell
 pnpm test:stage-10
+```
+
+Run the Stage 11 Alipay adapter and durable-Inbox acceptance:
+
+```powershell
+pnpm test:stage-11
+```
+
+Stage 12 retry/identity checks are part of Stage 11 E2E, the observability
+contract, and the full API E2E suite:
+
+```powershell
+pnpm test:e2e
 ```
 
 Run only the ten Stage 6 failure scenarios:
@@ -313,7 +341,11 @@ provider contract in [`docs/provider-adapter.md`](docs/provider-adapter.md).
 - The ten-scenario Failure Lab injects concurrency, timeout, replay, restart,
   and transaction rollback faults; GitHub Actions repeats the whole boundary.
 - PostgreSQL remains the source of truth. Redis is deliberately transport only,
-  and provider redirects never mutate money state.
+  dispatch retry times are persisted with jittered exponential backoff, and
+  provider redirects never mutate money state.
+- Verified provider event IDs are content-bound with canonical fingerprints;
+  collisions are rejected, and ADMIN list responses never include stored
+  provider payloads or actions.
 - Trace export is optional so local startup stays small and deterministic;
   Prometheus pull endpoints and JSON logs work without another container.
 - OpenTelemetry's JavaScript trace/metric APIs are used for stable telemetry;
@@ -344,6 +376,7 @@ packages/
   payment-core/    Provider-neutral contract, states, and errors
   payment-domain/  Shared state machines and webhook projection
   payment-paypal/  PayPal Sandbox Orders/capture/refund adapter
+  payment-alipay/  Alipay PC web sandbox/query/close/refund adapter
   payment-queue/   Redis/BullMQ queue policy and snapshots
   payment-stripe/  Stripe SDK adapter and contract tests
   observability/   JSON logs, OTel SDK, trace propagation, and metrics

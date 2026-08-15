@@ -13,7 +13,7 @@ export default function SystemPage() {
       <section className="mx-auto grid max-w-[1536px] gap-14 px-5 py-14 sm:px-8 sm:py-20 lg:items-center lg:px-16 lg:py-24 xl:grid-cols-[0.9fr_1.1fr] xl:gap-12">
         <div className="max-w-[680px]">
           <p className="font-mono text-xs font-bold tracking-[0.15em] text-[#0757ff] uppercase">
-            Stage 10 / Runtime + telemetry
+            Stage 11 / Durable payment runtime
           </p>
           <h1 className="mt-5 text-[clamp(3rem,6vw,5.5rem)] leading-[0.91] font-bold tracking-[-0.07em]">
             Explicit state, visible boundaries.

@@ -77,6 +77,9 @@ jobs:
       - name: Scan tracked files for payment secrets
         run: pnpm secrets:scan
 
+      - name: Audit production dependencies
+        run: pnpm audit:prod
+
       - name: Lint
         run: pnpm lint
 

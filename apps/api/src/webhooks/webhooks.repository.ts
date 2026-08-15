@@ -1,11 +1,18 @@
-import { Injectable } from '@nestjs/common';
-import { WebhookEventStatus } from '@payflow/database';
+import { BadRequestException, Injectable } from '@nestjs/common';
+import { PaymentProvider, WebhookEventStatus } from '@payflow/database';
 import { type VerifiedWebhookEvent } from '@payflow/payment-core';
-import { WebhookEventStore } from '@payflow/payment-domain';
-import { recordWebhookDuplicate } from '@payflow/observability';
+import {
+  type WebhookReceipt,
+  WebhookEventConflictError,
+  WebhookEventStore,
+} from '@payflow/payment-domain';
+import {
+  recordInboxReceived,
+  recordWebhookDuplicate,
+  recordWebhookEventConflict,
+} from '@payflow/observability';
 
 import { DatabaseService } from '../database/database.service';
-import { WebhookQueueService } from '../queue/webhook-queue.service';
 
 export interface WebhookProcessingResult {
   duplicate: boolean;
@@ -17,35 +24,68 @@ export interface WebhookProcessingResult {
 export class WebhooksRepository {
   private readonly store: WebhookEventStore;
 
-  constructor(
-    database: DatabaseService,
-    private readonly queue: WebhookQueueService,
-  ) {
+  constructor(private readonly database: DatabaseService) {
     this.store = new WebhookEventStore(database.prisma);
   }
 
   async processProviderEvent(
     event: VerifiedWebhookEvent,
   ): Promise<WebhookProcessingResult> {
-    const receipt = await this.store.receive(event);
+    await this.preflightAlipay(event);
+    let receipt: WebhookReceipt;
+    try {
+      receipt = await this.store.receive(event);
+    } catch (error: unknown) {
+      if (error instanceof WebhookEventConflictError) {
+        recordWebhookEventConflict({ provider: event.provider });
+        throw new BadRequestException({
+          code: error.code,
+          details: {
+            provider: error.provider,
+            providerEventId: error.providerEventId,
+          },
+          message:
+            'The provider event ID was already stored with different verified content.',
+        });
+      }
+      throw error;
+    }
+    recordInboxReceived({ provider: event.provider });
     if (receipt.duplicate) {
       recordWebhookDuplicate({ provider: event.provider });
     }
-    if (!receipt.enqueue) {
-      return {
-        duplicate: receipt.duplicate,
-        queued: false,
-        status: receipt.status,
-      };
-    }
-
-    const jobId = await this.queue.enqueue(receipt.eventId);
-    await this.store.markQueued(receipt.eventId, jobId);
-
     return {
       duplicate: receipt.duplicate,
-      queued: true,
+      queued: receipt.enqueue || receipt.status === WebhookEventStatus.RECEIVED,
       status: receipt.status,
     };
+  }
+
+  private async preflightAlipay(event: VerifiedWebhookEvent): Promise<void> {
+    if (event.provider !== PaymentProvider.ALIPAY) {
+      return;
+    }
+    const assertion = event.paymentAssertion;
+    const payment = assertion
+      ? await this.database.prisma.payment.findFirst({
+          where: {
+            id: assertion.merchantReference,
+            provider: PaymentProvider.ALIPAY,
+          },
+          select: { amount: true, currency: true },
+        })
+      : null;
+    if (
+      !assertion ||
+      !payment ||
+      assertion.amount !== payment.amount ||
+      assertion.currency !== payment.currency
+    ) {
+      throw new BadRequestException({
+        code: 'ALIPAY_WEBHOOK_REFERENCE_MISMATCH',
+        message:
+          'Alipay merchant reference, amount, or currency does not match the local payment.',
+      });
+    }
   }
 }

@@ -111,6 +111,7 @@ function mapCapture(
     amount: amount.minor,
     currency: amount.currency,
     kind: 'PAYMENT_TRANSITION',
+    merchantReference: paymentId,
     orderId,
     paymentId,
     providerCheckoutSessionId,

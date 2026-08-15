@@ -19,6 +19,8 @@ describe('PaymentsService', () => {
     completeCheckoutSession: jest.Mock;
     failProviderAttempt: jest.Mock;
     findOwnedById: jest.Mock;
+    markCreatedPaymentFailed: jest.Mock;
+    recoverExpiredPayment: jest.Mock;
     reservePayment: jest.Mock;
     startProviderAttempt: jest.Mock;
   };
@@ -34,6 +36,8 @@ describe('PaymentsService', () => {
       completeCheckoutSession: jest.fn(),
       failProviderAttempt: jest.fn(),
       findOwnedById: jest.fn(),
+      markCreatedPaymentFailed: jest.fn(),
+      recoverExpiredPayment: jest.fn(),
       reservePayment: jest.fn(),
       startProviderAttempt: jest.fn(),
     };
@@ -60,12 +64,13 @@ describe('PaymentsService', () => {
     repository.startProviderAttempt.mockResolvedValue({ id: 'attempt-id' });
     provider.createPayment.mockResolvedValue({
       amount: 3998,
+      checkoutExpiresAt: expiresAt,
+      checkoutUrl: 'https://checkout.stripe.test/c/payflow',
       currency: 'USD',
-      expiresAt,
+      merchantReference: reservedPayment.id,
       providerCheckoutSessionId: 'cs_test_stage_3',
       providerPaymentId: null,
       providerRequestId: 'req_stage_3',
-      redirectUrl: 'https://checkout.stripe.test/c/payflow',
       status: ProviderPaymentStatus.PENDING,
     });
     const completed = {
@@ -110,7 +115,7 @@ describe('PaymentsService', () => {
     reservation.created = false;
     reservation.payment = {
       ...reservedPayment,
-      checkoutExpiresAt: new Date('2026-08-13T12:00:00.000Z'),
+      checkoutExpiresAt: new Date('2099-08-13T12:00:00.000Z'),
       checkoutUrl: 'https://checkout.stripe.test/c/reused',
       providerCheckoutSessionId: 'cs_test_reused',
       status: PaymentStatus.PENDING,
@@ -122,6 +127,67 @@ describe('PaymentsService', () => {
     ).resolves.toMatchObject({
       checkoutUrl: 'https://checkout.stripe.test/c/reused',
       reused: true,
+    });
+    expect(provider.createPayment).not.toHaveBeenCalled();
+  });
+
+  it('does not create a second checkout when recovery finds provider success', async () => {
+    const reservation = createReservation();
+    const reservedPayment = requireReservedPayment(reservation);
+    reservation.created = false;
+    reservation.payment = {
+      ...reservedPayment,
+      checkoutExpiresAt: new Date('2026-08-13T12:00:00.000Z'),
+      checkoutUrl: 'https://checkout.stripe.test/c/expired',
+      providerCheckoutSessionId: 'cs_test_expired',
+      status: PaymentStatus.PENDING,
+    };
+    repository.reservePayment.mockResolvedValue(reservation);
+    repository.recoverExpiredPayment.mockResolvedValue({
+      changed: true,
+      paymentId: reservedPayment.id,
+      providerPaymentId: 'pi_test_recovered',
+      status: PaymentStatus.SUCCEEDED,
+    });
+
+    await expect(
+      service.createCheckoutSession('user-id', { orderId: 'order-id' }),
+    ).rejects.toMatchObject({
+      response: { code: 'PAYMENT_ALREADY_SUCCEEDED' },
+      status: 409,
+    });
+    expect(provider.createPayment).not.toHaveBeenCalled();
+  });
+
+  it('keeps an expired checkout when provider recovery is unknown', async () => {
+    const reservation = createReservation();
+    const reservedPayment = requireReservedPayment(reservation);
+    reservation.created = false;
+    reservation.payment = {
+      ...reservedPayment,
+      checkoutExpiresAt: new Date('2026-08-13T12:00:00.000Z'),
+      checkoutUrl: 'https://checkout.stripe.test/c/expired',
+      providerCheckoutSessionId: 'cs_test_expired',
+      status: PaymentStatus.PENDING,
+    };
+    repository.reservePayment.mockResolvedValue(reservation);
+    repository.recoverExpiredPayment.mockRejectedValue(
+      new PaymentProviderError(
+        'STRIPE',
+        'GET_PAYMENT',
+        'api_connection_error',
+        'Provider query timed out.',
+        null,
+        true,
+        true,
+      ),
+    );
+
+    await expect(
+      service.createCheckoutSession('user-id', { orderId: 'order-id' }),
+    ).rejects.toMatchObject({
+      response: { code: 'PAYMENT_RECOVERY_OUTCOME_UNKNOWN' },
+      status: 502,
     });
     expect(provider.createPayment).not.toHaveBeenCalled();
   });

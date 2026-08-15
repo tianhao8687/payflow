@@ -31,9 +31,15 @@ export function PaymentResult({ paymentId }: { paymentId: string }) {
 
     let active = true;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let inFlight = false;
+    let pollAttempt = 0;
     const controller = new AbortController();
 
     async function loadPayment(): Promise<void> {
+      if (!active || inFlight || document.visibilityState === 'hidden') {
+        return;
+      }
+      inFlight = true;
       try {
         const payment = await apiRequest<PaymentRecord>(
           `/payments/${encodeURIComponent(paymentId)}`,
@@ -47,7 +53,9 @@ export function PaymentResult({ paymentId }: { paymentId: string }) {
         setState({ payment, status: 'ready' });
 
         if (confirmingStatuses.has(payment.status)) {
-          timer = setTimeout(() => void loadPayment(), 2_000);
+          const delay = Math.min(2_000 * 2 ** pollAttempt, 30_000);
+          pollAttempt += 1;
+          timer = setTimeout(() => void loadPayment(), delay);
         }
       } catch (error: unknown) {
         if (
@@ -61,14 +69,30 @@ export function PaymentResult({ paymentId }: { paymentId: string }) {
           missing: error instanceof ApiError && error.status === 404,
           status: 'error',
         });
+      } finally {
+        inFlight = false;
       }
     }
 
+    function handleVisibilityChange(): void {
+      if (document.visibilityState !== 'visible') {
+        if (timer) {
+          clearTimeout(timer);
+          timer = undefined;
+        }
+        return;
+      }
+      pollAttempt = 0;
+      void loadPayment();
+    }
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
     void loadPayment();
 
     return () => {
       active = false;
       controller.abort();
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
       if (timer) {
         clearTimeout(timer);
       }
@@ -192,7 +216,8 @@ export function PaymentResult({ paymentId }: { paymentId: string }) {
               className="h-3 w-3 animate-pulse rounded-full bg-[#f4a000]"
               aria-hidden="true"
             />
-            Refreshing the protected local status every two seconds…
+            Checking the protected local status with capped backoff; polling
+            pauses while this page is hidden…
           </p>
         ) : null}
 
@@ -225,9 +250,9 @@ function getResultView(payment: PaymentRecord): {
     return {
       border: 'border-t-[#b42335]',
       eyebrow: 'text-[#b42335]',
-      heading: 'Payment failed.',
+      heading: 'Payment closed.',
       message:
-        'The trusted server-side payment state is failed. The order remains unpaid and can be retried safely.',
+        'The trusted server-side state is closed or failed. The order remains unpaid and can be retried safely.',
     };
   }
 
@@ -245,10 +270,30 @@ function getResultView(payment: PaymentRecord): {
     };
   }
 
+  if (payment.status === 'PENDING') {
+    return {
+      border: 'border-t-[#f4a000]',
+      eyebrow: 'text-[#785000]',
+      heading: 'Waiting for buyer payment.',
+      message:
+        'The provider checkout is open. PayFlow will not mark the order paid until a trusted server-side result arrives.',
+    };
+  }
+
+  if (payment.status === 'PROCESSING') {
+    return {
+      border: 'border-t-[#f4a000]',
+      eyebrow: 'text-[#785000]',
+      heading: 'Payment processing.',
+      message:
+        'The provider has reported activity, but the final payment outcome is still being confirmed.',
+    };
+  }
+
   return {
     border: 'border-t-[#f4a000]',
     eyebrow: 'text-[#785000]',
-    heading: 'Confirming payment…',
+    heading: 'Confirming payment result…',
     message:
       'Returning from a provider is not proof of payment. PayFlow is waiting for a trusted queued server-side result.',
   };

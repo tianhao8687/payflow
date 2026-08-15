@@ -10,14 +10,15 @@
   },
   "scripts": {
     "build": "pnpm -r --if-present build",
-    "ci": "pnpm format:check && pnpm secrets:scan && pnpm lint && pnpm typecheck && pnpm test && pnpm build",
+    "audit:prod": "pnpm audit --prod",
+    "ci": "pnpm run verify",
     "db:generate": "pnpm --filter @payflow/database prisma:generate",
     "db:migrate": "pnpm --filter @payflow/database prisma:migrate",
     "db:migrate:deploy": "pnpm --filter @payflow/database prisma:migrate:deploy",
     "db:seed": "pnpm --filter @payflow/database prisma:seed",
-    "dev": "pnpm db:generate && pnpm --filter @payflow/shared build && pnpm --filter @payflow/database build && pnpm --filter @payflow/observability build && pnpm --filter @payflow/payment-core build && pnpm --filter @payflow/payment-domain build && pnpm --filter @payflow/payment-paypal build && pnpm --filter @payflow/payment-queue build && pnpm --filter @payflow/payment-stripe build && pnpm --parallel --filter @payflow/web --filter @payflow/api --filter @payflow/worker dev",
-    "dev:api": "pnpm db:generate && pnpm --filter @payflow/shared build && pnpm --filter @payflow/database build && pnpm --filter @payflow/observability build && pnpm --filter @payflow/payment-core build && pnpm --filter @payflow/payment-domain build && pnpm --filter @payflow/payment-paypal build && pnpm --filter @payflow/payment-queue build && pnpm --filter @payflow/payment-stripe build && pnpm --filter @payflow/api dev",
-    "dev:worker": "pnpm db:generate && pnpm --filter @payflow/database build && pnpm --filter @payflow/observability build && pnpm --filter @payflow/payment-core build && pnpm --filter @payflow/payment-domain build && pnpm --filter @payflow/payment-paypal build && pnpm --filter @payflow/payment-queue build && pnpm --filter @payflow/payment-stripe build && pnpm --filter @payflow/worker dev",
+    "dev": "pnpm db:generate && pnpm --filter @payflow/shared build && pnpm --filter @payflow/database build && pnpm --filter @payflow/observability build && pnpm --filter @payflow/payment-core build && pnpm --filter @payflow/payment-domain build && pnpm --filter @payflow/payment-alipay build && pnpm --filter @payflow/payment-paypal build && pnpm --filter @payflow/payment-queue build && pnpm --filter @payflow/payment-stripe build && pnpm --parallel --filter @payflow/web --filter @payflow/api --filter @payflow/worker dev",
+    "dev:api": "pnpm db:generate && pnpm --filter @payflow/shared build && pnpm --filter @payflow/database build && pnpm --filter @payflow/observability build && pnpm --filter @payflow/payment-core build && pnpm --filter @payflow/payment-domain build && pnpm --filter @payflow/payment-alipay build && pnpm --filter @payflow/payment-paypal build && pnpm --filter @payflow/payment-queue build && pnpm --filter @payflow/payment-stripe build && pnpm --filter @payflow/api dev",
+    "dev:worker": "pnpm db:generate && pnpm --filter @payflow/database build && pnpm --filter @payflow/observability build && pnpm --filter @payflow/payment-core build && pnpm --filter @payflow/payment-domain build && pnpm --filter @payflow/payment-alipay build && pnpm --filter @payflow/payment-paypal build && pnpm --filter @payflow/payment-queue build && pnpm --filter @payflow/payment-stripe build && pnpm --filter @payflow/worker dev",
     "dev:web": "pnpm --filter @payflow/web dev",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
@@ -31,7 +32,9 @@
     "test:stage-8": "pnpm --filter @payflow/api test:stage-8 && pnpm --filter @payflow/payment-queue test",
     "test:stage-9": "pnpm --filter @payflow/api test:stage-9 && pnpm --filter @payflow/payment-queue test",
     "test:stage-10": "pnpm --filter @payflow/observability test && pnpm --filter @payflow/api test:stage-10",
-    "typecheck": "pnpm db:generate && pnpm -r --if-present typecheck"
+    "test:stage-11": "pnpm --filter @payflow/payment-alipay test && pnpm --filter @payflow/api test:stage-11",
+    "typecheck": "pnpm db:generate && pnpm -r --if-present typecheck",
+    "verify": "pnpm format:check && pnpm secrets:scan && pnpm audit:prod && pnpm lint && pnpm typecheck && pnpm test && pnpm build"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.0",

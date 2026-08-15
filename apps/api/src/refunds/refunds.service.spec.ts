@@ -20,11 +20,13 @@ import { RefundsService } from './refunds.service';
 describe('RefundsService', () => {
   let repository: {
     applyProviderResult: jest.Mock;
+    beginProviderAttempt: jest.Mock;
     findPaymentProvider: jest.Mock;
     recordProviderFailure: jest.Mock;
     reserve: jest.Mock;
   };
   let provider: {
+    getRefund: jest.Mock;
     isConfigured: jest.Mock;
     name: string;
     refundPayment: jest.Mock;
@@ -34,11 +36,13 @@ describe('RefundsService', () => {
   beforeEach(() => {
     repository = {
       applyProviderResult: jest.fn(),
+      beginProviderAttempt: jest.fn().mockResolvedValue(true),
       recordProviderFailure: jest.fn(),
       reserve: jest.fn(),
       findPaymentProvider: jest.fn().mockResolvedValue(PaymentProvider.STRIPE),
     };
     provider = {
+      getRefund: jest.fn(),
       isConfigured: jest.fn().mockReturnValue(true),
       name: 'STRIPE',
       refundPayment: jest.fn(),
@@ -123,6 +127,48 @@ describe('RefundsService', () => {
       refund: { id: succeeded.id, status: RefundStatus.SUCCEEDED },
       reused: true,
     });
+    expect(provider.refundPayment).not.toHaveBeenCalled();
+  });
+
+  it('queries a reused pending refund with the original provider reference before retrying', async () => {
+    const pending = refundFixture();
+    const succeeded = refundFixture({
+      providerRefundId: pending.id,
+      status: RefundStatus.SUCCEEDED,
+    });
+    repository.reserve.mockResolvedValue(reservation(pending, false));
+    provider.getRefund.mockResolvedValue({
+      amount: pending.amount,
+      currency: pending.payment.currency,
+      failureCode: null,
+      failureMessage: null,
+      providerPaymentId: pending.payment.providerPaymentId,
+      providerRefundId: pending.id,
+      providerRequestId: 'query-request',
+      status: ProviderRefundStatus.SUCCEEDED,
+    });
+    repository.applyProviderResult.mockResolvedValue({
+      changed: true,
+      refund: succeeded,
+    });
+
+    await expect(
+      service.create('payment-id', 'admin-id', {
+        amount: pending.amount,
+        reason: pending.reason,
+        refundRequestId: pending.refundRequestId,
+      }),
+    ).resolves.toMatchObject({
+      refund: { id: pending.id, status: RefundStatus.SUCCEEDED },
+      reused: true,
+    });
+    expect(provider.getRefund).toHaveBeenCalledWith(
+      expect.objectContaining({
+        merchantReference: pending.paymentId,
+        refundId: pending.id,
+      }),
+    );
+    expect(repository.beginProviderAttempt).not.toHaveBeenCalled();
     expect(provider.refundPayment).not.toHaveBeenCalled();
   });
 
@@ -224,6 +270,7 @@ function refundFixture(
     id: '33333333-3333-4333-8333-333333333333',
     idempotencyKey:
       'refund:create:11111111-1111-4111-8111-111111111111:44444444-4444-4444-8444-444444444444',
+    lastProviderAttemptAt: null,
     payment: {
       amount: 3600,
       attemptNo: 1,

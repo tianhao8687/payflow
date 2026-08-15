@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@payflow/database": "workspace:*",
+    "@payflow/payment-alipay": "workspace:*",
     "@payflow/observability": "workspace:*",
     "@payflow/payment-core": "workspace:*",
     "@payflow/payment-domain": "workspace:*",

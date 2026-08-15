@@ -73,12 +73,13 @@ class StageNineProvider implements PaymentProvider {
     const sessionId = `stage-9-session-${input.paymentId}`;
     return {
       amount: input.amount,
+      checkoutExpiresAt: new Date(Date.now() + 3_600_000),
+      checkoutUrl: `https://checkout.stripe.test/c/${sessionId}`,
       currency: input.currency,
-      expiresAt: new Date(Date.now() + 3_600_000),
+      merchantReference: input.merchantReference,
       providerCheckoutSessionId: sessionId,
       providerPaymentId: null,
       providerRequestId: 'stage-9-create-request',
-      redirectUrl: `https://checkout.stripe.test/c/${sessionId}`,
       status: ProviderPaymentStatus.PENDING,
     };
   }

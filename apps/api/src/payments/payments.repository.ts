@@ -7,6 +7,11 @@ import {
   Prisma,
   isTransactionWriteConflict,
 } from '@payflow/database';
+import { PaymentProviderRegistry } from '@payflow/payment-core';
+import {
+  PaymentRecoveryService,
+  type PaymentRecoveryResult,
+} from '@payflow/payment-domain';
 
 import { DatabaseService } from '../database/database.service';
 
@@ -30,7 +35,7 @@ export interface PaymentReservation {
 export interface CompletedCheckoutData {
   checkoutExpiresAt: Date;
   checkoutUrl: string;
-  providerCheckoutSessionId: string;
+  providerCheckoutSessionId: string | null;
   providerPaymentId: string | null;
   providerRequestId: string | null;
 }
@@ -149,7 +154,7 @@ export class PaymentsRepository {
         );
       }
 
-      const payment = current.providerCheckoutSessionId
+      const payment = current.checkoutUrl
         ? current
         : await transaction.payment.update({
             where: { id: paymentId },
@@ -175,6 +180,27 @@ export class PaymentsRepository {
         include: withAttemptCount,
       });
     });
+  }
+
+  async markCreatedPaymentFailed(paymentId: string): Promise<void> {
+    await this.database.prisma.payment.updateMany({
+      where: {
+        checkoutUrl: null,
+        id: paymentId,
+        status: PaymentStatus.CREATED,
+      },
+      data: { status: PaymentStatus.FAILED },
+    });
+  }
+
+  recoverExpiredPayment(
+    paymentId: string,
+    providers: PaymentProviderRegistry,
+  ): Promise<PaymentRecoveryResult> {
+    return new PaymentRecoveryService(
+      this.database.prisma,
+      providers,
+    ).recoverExpiredPayment(paymentId);
   }
 
   async failProviderAttempt(

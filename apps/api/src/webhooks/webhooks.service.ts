@@ -34,7 +34,9 @@ export class WebhooksService {
     rawBody: Buffer | undefined,
     signature: string | undefined,
   ): Promise<WebhookResponseDto> {
-    return this.handle('STRIPE', rawBody, signature, {});
+    return this.handle('STRIPE', rawBody, {
+      headers: { 'stripe-signature': signature },
+    });
   }
 
   handlePayPal(
@@ -42,14 +44,27 @@ export class WebhooksService {
     signature: string | undefined,
     headers: Readonly<Record<string, string | undefined>>,
   ): Promise<WebhookResponseDto> {
-    return this.handle('PAYPAL', rawBody, signature, headers);
+    return this.handle('PAYPAL', rawBody, {
+      headers: { ...headers, 'paypal-transmission-sig': signature },
+    });
+  }
+
+  async handleAlipay(
+    rawBody: Buffer | undefined,
+    contentType: string | undefined,
+    parsedForm: Readonly<Record<string, string>> | undefined,
+  ): Promise<WebhookResponseDto> {
+    return this.handle('ALIPAY', rawBody, { contentType, parsedForm });
   }
 
   private async handle(
     providerName: string,
     rawBody: Buffer | undefined,
-    signature: string | undefined,
-    headers: Readonly<Record<string, string | undefined>>,
+    input: {
+      contentType?: string;
+      headers?: Readonly<Record<string, string | undefined>>;
+      parsedForm?: Readonly<Record<string, string>>;
+    },
   ): Promise<WebhookResponseDto> {
     const provider = this.providerFor(providerName);
     enrichCorrelation({ provider: providerName });
@@ -71,8 +86,11 @@ export class WebhooksService {
         message: 'The unmodified request body is required.',
       });
     }
-    if (!signature) {
-      throw this.invalidSignature(providerName);
+    if (rawBody.byteLength > 32 * 1024) {
+      throw new BadRequestException({
+        code: 'WEBHOOK_BODY_TOO_LARGE',
+        message: 'Webhook body exceeds the 32 KiB limit.',
+      });
     }
 
     try {
@@ -82,7 +100,7 @@ export class WebhooksService {
           attributes: { 'payment.provider': providerName },
           kind: SpanKind.CLIENT,
         },
-        () => provider.verifyWebhook({ headers, rawBody, signature }),
+        () => provider.verifyWebhook({ ...input, rawBody }),
       );
       const correlation = correlationFromAction(event.action);
       enrichCorrelation({
@@ -113,7 +131,9 @@ export class WebhooksService {
     } catch (error: unknown) {
       if (
         error instanceof PaymentProviderError &&
-        error.code === 'WEBHOOK_SIGNATURE_INVALID'
+        new Set(['WEBHOOK_SIGNATURE_INVALID', 'ALIPAY_WEBHOOK_INVALID']).has(
+          error.code,
+        )
       ) {
         throw this.invalidSignature(providerName);
       }

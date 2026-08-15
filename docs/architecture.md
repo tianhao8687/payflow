@@ -1,12 +1,13 @@
 # PayFlow architecture
 
-## Current boundary: Stage 10 accepted
+## Current boundary: Stage 12 webhook reliability hardening
 
-Stage 10 adds an accepted observability and portfolio layer around the Stage 9
-system. It does not change the locked Order, Payment, Refund, WebhookEvent,
-outbox, ledger, or reconciliation ownership rules. The NestJS API remains the
-sole HTTP/business authorization boundary; PostgreSQL remains the source of
-truth.
+Stage 12 preserves the Stage 11 provider-neutral Alipay sandbox,
+reference-based recovery, and PostgreSQL Inbox Dispatcher. It adds scheduled
+Dispatcher retries, verified-event fingerprints, collision rejection, and
+ADMIN response minimization. It does not change locked Order, Payment, Refund,
+outbox, ledger, or reconciliation ownership. The NestJS API remains the sole
+HTTP/business authorization boundary; PostgreSQL remains the source of truth.
 
 ```mermaid
 flowchart TB
@@ -36,11 +37,12 @@ flowchart TB
     PaymentCore[payment-core contract]
     StripeProvider[payment-stripe adapter]
     PayPalProvider[payment-paypal adapter]
+    AlipayProvider[payment-alipay adapter]
     PaymentDomain[payment-domain state projection]
     PaymentQueue[payment-queue BullMQ boundary]
   end
 
-  Worker[Standalone webhook worker]
+  Worker[Standalone worker + Inbox Dispatcher]
   Redis[(Redis / BullMQ)]
 
   subgraph Observability[Stage 10 observability]
@@ -74,20 +76,26 @@ flowchart TB
   Webhooks --> PaymentCore
   ProviderComposition --> StripeProvider
   ProviderComposition --> PayPalProvider
+  ProviderComposition --> AlipayProvider
   PaymentCore -. implemented by .-> StripeProvider
   PaymentCore -. implemented by .-> PayPalProvider
+  PaymentCore -. implemented by .-> AlipayProvider
   StripeProvider --> Stripe[Stripe Test hosted Checkout]
   PayPalProvider --> PayPal[PayPal Sandbox Orders v2]
+  AlipayProvider --> Alipay[Alipay PC web sandbox]
   Stripe -->|raw Event + signature| Webhooks
   PayPal -->|raw Event + verification headers| Webhooks
+  Alipay -->|signed form notification| Webhooks
   Webhooks -->|verify + durable receive| DatabaseModule
-  Webhooks -->|enqueue event UUID| PaymentQueue --> Redis
+  Worker -->|lease due unqueued Inbox rows| DatabaseModule
+  Worker -->|enqueue event UUID| PaymentQueue --> Redis
   Redis --> Worker
   Worker --> PaymentDomain
   Worker -->|poll outbox + post ledger| DatabaseModule
   Worker -->|scheduled provider lookup| PaymentCore
   Worker --> StripeProvider
   Worker --> PayPalProvider
+  Worker --> AlipayProvider
   PaymentDomain -->|state projection + outbox| DatabaseModule
   Refunds --> DatabaseModule
   Admin --> DatabaseModule

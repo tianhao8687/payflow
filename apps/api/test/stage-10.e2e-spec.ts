@@ -52,7 +52,7 @@ describe('PayFlow Stage 10 observability acceptance (e2e)', () => {
       docs: '/docs',
       health: '/health',
       service: 'PayFlow API',
-      stage: 10,
+      stage: 11,
     });
   });
 });

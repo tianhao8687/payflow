@@ -27,13 +27,20 @@ const providers: Array<{
     label: 'PayPal Sandbox',
     value: 'PAYPAL',
   },
+  {
+    description: 'PC web sandbox (CNY only)',
+    label: 'Alipay Sandbox',
+    value: 'ALIPAY',
+  },
 ];
 
 export function PaymentCheckoutControl({
   activeProvider = null,
+  currency,
   orderId,
 }: {
   activeProvider?: PaymentProvider | null;
+  currency: string;
   orderId: string;
 }) {
   const { status, token } = useAuth();
@@ -108,10 +115,11 @@ export function PaymentCheckoutControl({
         <legend className="text-sm font-bold text-[#3f4652]">
           Choose a sandbox provider
         </legend>
-        <div className="mt-3 grid gap-2 sm:grid-cols-2">
+        <div className="mt-3 grid gap-2 sm:grid-cols-3">
           {providers.map((option) => {
             const locked =
-              activeProvider !== null && option.value !== activeProvider;
+              (activeProvider !== null && option.value !== activeProvider) ||
+              (option.value === 'ALIPAY' && currency !== 'CNY');
             return (
               <label
                 className={`relative flex min-h-20 cursor-pointer items-start gap-3 border p-3 transition-colors has-[:checked]:border-[#0757ff] has-[:checked]:bg-[#eef4ff] has-[:focus-visible]:outline-3 has-[:focus-visible]:outline-offset-3 has-[:focus-visible]:outline-[#0757ff] ${
@@ -149,11 +157,20 @@ export function PaymentCheckoutControl({
         </p>
       ) : null}
 
+      {currency !== 'CNY' ? (
+        <p className="mt-3 text-xs leading-5 text-[#555b66]">
+          Alipay is available only for CNY orders; use the seeded CNY sandbox
+          item to test it.
+        </p>
+      ) : null}
+
       <button
         className={`mt-4 min-h-12 rounded-md px-6 font-semibold text-white disabled:cursor-wait disabled:bg-[#858b95] disabled:shadow-none focus-visible:outline-3 focus-visible:outline-offset-4 focus-visible:outline-[#0757ff] ${
           provider === 'PAYPAL'
             ? 'bg-[#0070ba] shadow-[0_4px_0_#004d80] hover:-translate-y-0.5 hover:bg-[#005ea6]'
-            : 'bg-[#635bff] shadow-[0_4px_0_#3d35c8] hover:-translate-y-0.5 hover:bg-[#534be8]'
+            : provider === 'ALIPAY'
+              ? 'bg-[#1677ff] shadow-[0_4px_0_#0758c9] hover:-translate-y-0.5 hover:bg-[#0868e8]'
+              : 'bg-[#635bff] shadow-[0_4px_0_#3d35c8] hover:-translate-y-0.5 hover:bg-[#534be8]'
         }`}
         disabled={submitting}
         onClick={() => void openCheckout()}
@@ -183,13 +200,23 @@ function isAllowedCheckoutDestination(
     return false;
   }
 
-  return provider === 'STRIPE'
-    ? destination.hostname === 'checkout.stripe.com'
-    : new Set(['sandbox.paypal.com', 'www.sandbox.paypal.com']).has(
-        destination.hostname,
-      );
+  if (provider === 'STRIPE') {
+    return destination.host === 'checkout.stripe.com';
+  }
+  if (provider === 'PAYPAL') {
+    return new Set(['sandbox.paypal.com', 'www.sandbox.paypal.com']).has(
+      destination.host,
+    );
+  }
+  return new Set([
+    'openapi-sandbox.dl.alipaydev.com',
+    'openapi.alipay.com',
+  ]).has(destination.host);
 }
 
 function providerLabel(provider: PaymentProvider): string {
-  return provider === 'STRIPE' ? 'Stripe Test' : 'PayPal Sandbox';
+  if (provider === 'STRIPE') {
+    return 'Stripe Test';
+  }
+  return provider === 'PAYPAL' ? 'PayPal Sandbox' : 'Alipay Sandbox';
 }
